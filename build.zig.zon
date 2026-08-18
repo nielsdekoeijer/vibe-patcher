@@ -1,0 +1,17 @@
+.{
+    .name = .vibe_patcher,
+    .version = "0.0.0",
+    .fingerprint = 0x3e9fbc5640fdcda1,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .sdl = .{
+            .url = "git+https://github.com/allyourcodebase/SDL#5118b3f6f8786c34b2b279e3aedd0cc696e79582",
+            .hash = "sdl-1.0.2+3.4.14-i4QD0ViwqQBKIzpZ0UWH_c8b3aSqKq-8Y27R9qQrMIDf",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
