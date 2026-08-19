@@ -1,7 +1,7 @@
 const std = @import("std");
 const sdl = @import("sdl3");
 
-pub const SDL3Error = error{ LibraryInitialization, UnexpectedNullPointer, WindowInitialization };
+pub const SDL3Error = error{ LibraryInitialization, UnexpectedNullPointer, WindowInitialization, GPUInitialization };
 
 /// Ergonomic wrapper to specify the SDL3 shader backend
 pub const SDL3ShaderFormat = enum(u32) {
@@ -65,7 +65,8 @@ fn SDL3CreateWindow(title: [*:0]const u8, w: u32, h: u32) SDL3Error!*sdl.SDL_Win
     std.log.info("Creating SDL3 Window...", .{});
     errdefer std.log.err("Creating SDL3 GPU device failed: '{s}'", .{sdl.SDL_GetError()});
 
-    const window = sdl.SDL_CreateWindow(title, @intCast(w), @intCast(h), 0) orelse {
+    const flags = sdl.SDL_WINDOW_RESIZABLE | sdl.SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    const window = sdl.SDL_CreateWindow(title, @intCast(w), @intCast(h), flags) orelse {
         return SDL3Error.UnexpectedNullPointer;
     };
 
@@ -76,7 +77,40 @@ fn SDL3CreateWindow(title: [*:0]const u8, w: u32, h: u32) SDL3Error!*sdl.SDL_Win
 /// Destroy the SDL3 window
 fn SDL3DestroyWindow(window: *sdl.SDL_Window) void {
     std.log.info("Destroying SDL3 GPU device", .{});
-    sdl.SDL_DestroyGPUDevice(window);
+    sdl.SDL_DestroyWindow(window);
+}
+
+/// Claim the SDL3 window to the gpu
+fn SDL3GPUClaimWindow(device: *sdl.SDL_GPUDevice, window: *sdl.SDL_Window) SDL3Error!void {
+    std.log.info("Claiming SDL3 window for our GPU...", .{});
+    errdefer std.log.err("Claiming SDL3 window for our GPU failed: '{s}'", .{sdl.SDL_GetError()});
+
+    if (sdl.SDL_ClaimWindowForGPUDevice(device, window) != true) {
+        return SDL3Error.GPUInitialization;
+    }
+
+    std.log.info("Claiming SDL3 window for our GPU OK", .{});
+}
+
+/// Claim the SDL3 window from the GPU
+fn SDL3GPUReleaseWindow(device: *sdl.SDL_GPUDevice, window: *sdl.SDL_Window) void {
+    std.log.info("Releasing SDL3 window from GPU device", .{});
+
+    sdl.SDL_ReleaseWindowFromGPUDevice(device, window);
+}
+
+
+/// Acquire a command buffer from an SDL3 GPU
+fn SDL3AcquireGPUCommandBuffer(device: *sdl.SDL_GPUDevice) SDL3Error!*sdl.SDL_GPUCommandBuffer {
+    std.log.info("Acquiring command buffer from SDL3 GPU...", .{});
+    errdefer std.log.err("Acquiring command buffer from SDL3 GPU failed: '{s}'", .{sdl.SDL_GetError()});
+
+    const command_buffer = sdl.SDL_AcquireGPUCommandBuffer(device) orelse {
+        return SDL3Error.GPUInitialization;
+    };
+
+    std.log.info("Acquiring command buffer from SDL3 GPU OK", .{});
+    return command_buffer;
 }
 
 /// Main entrypoint into the program
@@ -89,4 +123,10 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
     const window = try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
     defer SDL3DestroyWindow(window);
+
+    try SDL3GPUClaimWindow(device, window);
+    defer SDL3GPUReleaseWindow(device, window);
+
+    const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
+    _ = command_buffer;
 }
