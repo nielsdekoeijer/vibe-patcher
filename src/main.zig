@@ -7,6 +7,8 @@ pub fn main(init: std.process.Init) !void {
     const options = vibe_patcher.ProgramSettings {
         .enable_gpu_debug = true,
         .shader_format = .spirv,
+        .window_w = 640,
+        .window_h = 480,
     };
 
     try vibe_patcher.run(options);
