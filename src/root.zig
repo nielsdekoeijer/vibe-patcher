@@ -148,6 +148,7 @@ pub const ProgramSettings = struct {
     window_h: u32,
 };
 
+/// Helper struct typing dimensions to an SDL swapchain texture
 const SwapchainTexture = struct {
     tex: *sdl.SDL_GPUTexture,
     w: u32,
@@ -156,6 +157,9 @@ const SwapchainTexture = struct {
 
 /// Name of our window
 const WindowName: [*:0]const u8 = "vibe-patcher";
+
+/// Our default clear color
+const ClearColor = sdl.SDL_FColor{ .r = 0.09, .g = 0.09, .b = 0.11, .a = 1.0 };
 
 /// Initialize the SDL3 library with the specified subsystems
 fn SDL3Initialize() SDL3Error!void {
@@ -292,7 +296,7 @@ fn SDL3EndGPURenderPass(
     sdl.SDL_EndGPURenderPass(render_pass);
 }
 
-/// Block until we can acquire a swapchain texture
+/// Block until we can acquire a swapchain texture. Blocking dictated by vsync.
 fn SDL3AcquireGPUSwapchainTextureBlocking(
     command_buffer: *sdl.SDL_GPUCommandBuffer,
     window: *sdl.SDL_Window,
@@ -392,7 +396,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                 .texture = swapchain_texture.tex,
                 .load_op = sdl.SDL_GPU_LOADOP_CLEAR,
                 .store_op = sdl.SDL_GPU_STOREOP_STORE,
-                .clear_color = sdl.SDL_FColor{ .r = 0.09, .g = 0.09, .b = 0.11, .a = 1.0 },
+                .clear_color = ClearColor,
             }),
         };
 
