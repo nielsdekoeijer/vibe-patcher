@@ -1,7 +1,14 @@
 const std = @import("std");
 const sdl = @import("sdl3");
 
-pub const SDL3Error = error{ LibraryInitialization, UnexpectedNullPointer, WindowInitialization, GPUInitialization };
+/// Our error set for SDL3
+pub const SDL3Error = error{
+    LibraryInitialization,
+    UnexpectedNullPointer,
+    WindowInitialization,
+    GPUInitialization,
+    GPUInteraction,
+};
 
 /// Ergonomic wrapper to specify the SDL3 shader backend
 pub const SDL3ShaderFormat = enum(u32) {
@@ -18,6 +25,12 @@ pub const ProgramSettings = struct {
     enable_gpu_debug: bool,
     window_w: u32,
     window_h: u32,
+};
+
+const SwapchainTexture = struct {
+    tex: *sdl.SDL_GPUTexture,
+    w: u32,
+    h: u32,
 };
 
 /// Name of our window
@@ -101,17 +114,72 @@ fn SDL3GPUReleaseWindow(device: *sdl.SDL_GPUDevice, window: *sdl.SDL_Window) voi
 
 /// Acquire a command buffer from an SDL3 GPU
 fn SDL3AcquireGPUCommandBuffer(device: *sdl.SDL_GPUDevice) SDL3Error!*sdl.SDL_GPUCommandBuffer {
-    std.log.info("Acquiring command buffer from SDL3 GPU...", .{});
+    std.log.debug("Acquiring command buffer from SDL3 GPU...", .{});
     errdefer std.log.err("Acquiring command buffer from SDL3 GPU failed: '{s}'", .{sdl.SDL_GetError()});
 
     const command_buffer = sdl.SDL_AcquireGPUCommandBuffer(device) orelse {
-        return SDL3Error.GPUInitialization;
+        return SDL3Error.GPUInteraction;
     };
 
-    std.log.info("Acquiring command buffer from SDL3 GPU OK", .{});
+    std.log.debug("Acquiring command buffer from SDL3 GPU OK", .{});
     return command_buffer;
 }
 
+/// Submit a command buffer to the SDL3 GPU
+fn SDL3SubmitGPUCommandBuffer(command_buffer: *sdl.SDL_GPUCommandBuffer) SDL3Error!void {
+    const str = "Submitting command buffer to SDL3 GPU";
+    std.log.debug("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
+
+    if (!sdl.SDL_SubmitGPUCommandBuffer(command_buffer)) {
+        return SDL3Error.GPUInteraction;
+    }
+
+    std.log.debug("{s} OK", .{str});
+}
+
+/// Begin a SDL3 GPU render pass
+fn SDL3BeginGPURenderPass() void {}
+
+/// Block until we can acquire a swapchain texture
+fn SDL3AcquireGPUSwapchainTextureBlocking(
+    command_buffer: *sdl.SDL_GPUCommandBuffer,
+    window: *sdl.SDL_Window,
+) SDL3Error!?SwapchainTexture {
+    const str = "Acquiring SDL3 GPU swapchain texture";
+    std.log.debug("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
+
+    var w: u32 = 0;
+    var h: u32 = 0;
+    var texture: ?*sdl.SDL_GPUTexture = null;
+    if (!sdl.SDL_WaitAndAcquireGPUSwapchainTexture(
+        command_buffer,
+        window,
+        &texture,
+        &w,
+        &h,
+    )) {
+        return SDL3Error.GPUInteraction;
+    }
+
+    if (texture) |tex| {
+        std.log.debug("{s} OK", .{str});
+        return SwapchainTexture{
+            .tex = tex,
+            .w = w,
+            .h = h,
+        };
+    } else {
+        std.log.info("{s} resulted in null texture, app possibly minimized", .{str});
+        return null;
+    }
+}
+
+/// End a SDL3 GPU render pass
+fn SDL3EndGPURenderPass() void {}
+
+/// Helper function to print an SDL3 Event
 fn SDL3EventName(event: u32) []const u8 {
     const EventEnum = enum(u32) {
         SDL_EVENT_QUIT = sdl.SDL_EVENT_QUIT,
@@ -264,19 +332,27 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     try SDL3GPUClaimWindow(device, window);
     defer SDL3GPUReleaseWindow(device, window);
 
-    const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
-    _ = command_buffer;
-
     outer_loop: while (true) {
-        event_loop: while(SDL3PollEvent()) |event| {
-            switch(event.type) {
+        event_loop: while (SDL3PollEvent()) |event| {
+            switch (event.type) {
                 sdl.SDL_EVENT_QUIT => {
                     break :outer_loop;
                 },
-                else => {}
+                else => {},
             }
 
             continue :event_loop;
         }
+
+        const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
+
+        const swapchain_texture = try SDL3AcquireGPUSwapchainTextureBlocking(command_buffer, window) orelse {
+            try SDL3SubmitGPUCommandBuffer(command_buffer);
+            continue :outer_loop;
+        };
+
+        try SDL3SubmitGPUCommandBuffer(command_buffer);
+
+        _ = swapchain_texture;
     }
 }
