@@ -20,4 +20,16 @@ pub const ShaderKind = enum {
 pub const Shader = struct {
     code: []const u8,
     kind: ShaderKind,
+    num_samplers: u32,
+    num_storage_textures: u32,
+    num_storage_buffers: u32,
+    num_uniform_buffers: u32,
+};
+
+pub const ShaderDescription = struct {
+    path: []const u8,
+    num_samplers: u32,
+    num_storage_textures: u32,
+    num_storage_buffers: u32,
+    num_uniform_buffers: u32,
 };

@@ -2,55 +2,17 @@ const std = @import("std");
 const sdl = @import("sdl3");
 const shader_module = @import("shader");
 
-/// What we send to the GPU
-pub const Vertex = extern struct {
-    xy: [2]f32,
-    uv: [2]f32,
+/// Helper struct that manages the input and outputs for our quad shadser
+pub const QuadInstance = extern struct {
+    const VertexCount = 4;
 
-    const VertexBufferDescription = [_]sdl.SDL_GPUVertexBufferDescription{
-        .{ .slot = 0, .pitch = @sizeOf(Vertex), .input_rate = sdl.SDL_GPU_VERTEXINPUTRATE_VERTEX, .instance_step_rate = 0 },
-    };
+    shape: [4]f32,
+    color: [4]f32,
 
-    const VertexAttributes = [_]sdl.SDL_GPUVertexAttribute{
-        .{ .location = 0, .buffer_slot = 0, .format = sdl.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "xy") },
-        .{ .location = 1, .buffer_slot = 0, .format = sdl.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },
-    };
-
-    pub fn getVertexInputState() sdl.SDL_GPUVertexInputState {
-        return sdl.SDL_GPUVertexInputState{
-            .vertex_buffer_descriptions = &Vertex.VertexBufferDescription,
-            .num_vertex_buffers = Vertex.VertexBufferDescription.len,
-            .vertex_attributes = &Vertex.VertexAttributes,
-            .num_vertex_attributes = Vertex.VertexAttributes.len,
-        };
-    }
-};
-
-/// Helper struct that manages a quad
-pub const Quad = struct {
-    const indices = [6]u16{ 0, 1, 2, 0, 2, 3 };
-    vertices: [4]Vertex,
-
-    pub fn init(x: f32, y: f32, w: f32, h: f32) Quad {
-        return Quad{
-            .vertices = .{
-                .{
-                    .xy = .{ x + 0, y + 0 },
-                    .uv = .{ 0.0, 0.0 },
-                },
-                .{
-                    .xy = .{ x + w, y + 0 },
-                    .uv = .{ 1.0, 0.0 },
-                },
-                .{
-                    .xy = .{ x + w, y + h },
-                    .uv = .{ 1.0, 1.0 },
-                },
-                .{
-                    .xy = .{ x + 0, y + h },
-                    .uv = .{ 0.0, 1.0 },
-                },
-            },
+    pub fn init(x: f32, y: f32, w: f32, h: f32, color: [4]f32) QuadInstance {
+        return QuadInstance{
+            .shape = .{ x, y, w, h },
+            .color = color,
         };
     }
 };
@@ -68,6 +30,7 @@ pub const SDL3Error = error{
 pub const SDL3BufferUsage = enum(u32) {
     VERTEX = sdl.SDL_GPU_BUFFERUSAGE_VERTEX,
     INDEX = sdl.SDL_GPU_BUFFERUSAGE_INDEX,
+    GRAPHICS_STORAGE_READ = sdl.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
 };
 
 /// Ergonomic wrapper to specify the SDL3 shader backend
@@ -423,16 +386,14 @@ fn SDL3GPUCreateShader(device: *sdl.SDL_GPUDevice, shader: shader_module.Shader)
             .code = shader.code.ptr,
             .entrypoint = "main",
             .format = sdl.SDL_GPU_SHADERFORMAT_SPIRV,
+            .num_samplers = shader.num_samplers,
+            .num_storage_buffers = shader.num_storage_buffers,
+            .num_uniform_buffers = shader.num_uniform_buffers,
+            .num_storage_textures = shader.num_storage_textures,
             .stage = switch (shader.kind) {
                 .FRAG => sdl.SDL_GPU_SHADERSTAGE_FRAGMENT,
                 .VERT => sdl.SDL_GPU_SHADERSTAGE_VERTEX,
             },
-
-            // Remaining options
-            .num_samplers = 0,
-            .num_storage_buffers = 0,
-            .num_uniform_buffers = 0,
-            .num_storage_textures = 0,
         },
     ) orelse {
         return SDL3Error.GPUInteraction;
@@ -475,7 +436,7 @@ fn SDL3GPUCreateGraphicsPipeline(
         &sdl.SDL_GPUGraphicsPipelineCreateInfo{
             .vertex_shader = vert,
             .fragment_shader = frag,
-            .primitive_type = sdl.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+            .primitive_type = sdl.SDL_GPU_PRIMITIVETYPE_TRIANGLESTRIP,
             .target_info = sdl.SDL_GPUGraphicsPipelineTargetInfo{
                 .num_color_targets = 1,
                 .color_target_descriptions = &color_targets,
@@ -540,7 +501,22 @@ fn SDL3GPUBindVertexBuffers(
     sdl.SDL_BindGPUVertexBuffers(render_pass, 0, &bindings, buffers.len);
 }
 
-/// Bind SDL3 index buffer to a render pass
+/// Bind storage buffers to a render pass for the vertex stage, starting at slot 0
+fn SDL3GPUBindVertexStorageBuffers(
+    render_pass: *sdl.SDL_GPURenderPass,
+    buffers: anytype,
+) void {
+    std.log.debug("Binding SDL3 GPU vertex storage buffers", .{});
+
+    var bufs: [buffers.len]?*sdl.SDL_GPUBuffer = undefined;
+    inline for (buffers, 0..) |buf, i| {
+        bufs[i] = buf;
+    }
+
+    sdl.SDL_BindGPUVertexStorageBuffers(render_pass, 0, &bufs, buffers.len);
+}
+
+/// Bind SDL3 index buffer to a render pass, I hardcode indices to be 16 bit
 fn SDL3GPUBindIndexBuffer(
     render_pass: *sdl.SDL_GPURenderPass,
     buffer: *sdl.SDL_GPUBuffer,
@@ -554,14 +530,17 @@ fn SDL3GPUBindIndexBuffer(
     );
 }
 
-/// Draw primatives indexed using bound pipeline and vertex + index buffers
-fn SDL3GPUDrawIndexed(
+/// Draw primitives non-indexed: `num_vertices` per instance, `num_instances` total. 
+///
+/// NOTE: We start at the beginning of the list in both cases.
+fn SDL3GPUDraw(
     render_pass: *sdl.SDL_GPURenderPass,
-    num_indices: u32,
+    num_vertices: u32,
+    num_instances: u32,
 ) void {
-    std.log.debug("Drawing on SDL3 GPU in indexed fashion", .{});
+    std.log.debug("Drawing on SDL3 GPU", .{});
 
-    sdl.SDL_DrawGPUIndexedPrimitives(render_pass, num_indices, 1, 0, 0, 0);
+    sdl.SDL_DrawGPUPrimitives(render_pass, num_vertices, num_instances, 0, 0);
 }
 
 /// Create an SDL3 GPU buffer
@@ -665,28 +644,27 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     try SDL3GPUClaimWindow(device, window);
     defer SDL3GPUDestroyWindow(device, window);
 
-    const quad = Quad.init(-0.5, -0.5, 1.0, 1.0);
-
     const quad_pipeline = try SDL3GPUCreateGraphicsPipeline(
         device,
         window,
         quad_vert,
         quad_frag,
-        Vertex.getVertexInputState(),
+        std.mem.zeroes(sdl.SDL_GPUVertexInputState),
     );
     defer SDL3GPUDestroyGraphicsPipeline(device, quad_pipeline);
 
-    const vbuffer_size = @sizeOf(@TypeOf(quad.vertices));
-    const vbuffer_mode = &[_]SDL3BufferUsage{.VERTEX};
-    const vbuffer = try SDL3GPUCreateBuffer(device, vbuffer_mode, vbuffer_size);
-    defer SDL3GPUDestroyBuffer(device, vbuffer);
-    try SDL3GPUBufferUpload(device, vbuffer, std.mem.sliceAsBytes(quad.vertices[0..]));
+    const quad_list = [_]QuadInstance{
+        QuadInstance.init(-0.5, -0.5, 1.0, 1.0, .{ 1.0, 0.5, 0.2, 1.0 }),
+        QuadInstance.init(0.1, 0.1, 0.4, 0.4, .{ 0.2, 0.6, 1.0, 1.0 }),
+    };
+    const quad_buffers = try SDL3GPUCreateBuffer(
+        device,
+        &[_]SDL3BufferUsage{.GRAPHICS_STORAGE_READ},
+        @sizeOf(@TypeOf(quad_list)),
+    );
+    defer SDL3GPUDestroyBuffer(device, quad_buffers);
 
-    const ibuffer_size = @sizeOf(@TypeOf(Quad.indices));
-    const ibuffer_mode = &[_]SDL3BufferUsage{.INDEX};
-    const ibuffer = try SDL3GPUCreateBuffer(device, ibuffer_mode, ibuffer_size);
-    defer SDL3GPUDestroyBuffer(device, ibuffer);
-    try SDL3GPUBufferUpload(device, ibuffer, std.mem.sliceAsBytes(Quad.indices[0..]));
+    try SDL3GPUBufferUpload(device, quad_buffers, std.mem.sliceAsBytes(quad_list[0..]));
 
     outer_loop: while (true) {
         event_loop: while (SDL3PollEvent()) |event| {
@@ -736,10 +714,8 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
         const render_pass = try SDL3BeginGPURenderPass(command_buffer, &color_target_infos, null);
 
         SDL3GPUBindPipeline(render_pass, quad_pipeline);
-        SDL3GPUBindVertexBuffers(render_pass, .{vbuffer});
-        SDL3GPUBindIndexBuffer(render_pass, ibuffer);
-        SDL3GPUDrawIndexed(render_pass, Quad.indices.len);
-
+        SDL3GPUBindVertexStorageBuffers(render_pass, .{quad_buffers});
+        SDL3GPUDraw(render_pass, QuadInstance.VertexCount, quad_list.len);
         SDL3EndGPURenderPass(render_pass);
 
         try SDL3SubmitGPUCommandBuffer(command_buffer);

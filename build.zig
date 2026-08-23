@@ -1,11 +1,13 @@
 const std = @import("std");
 
 const ShaderKind = @import("modules/shader/root.zig").ShaderKind;
+const ShaderDescription = @import("modules/shader/root.zig").ShaderDescription;
 
 /// Helper wrapper around the shader module.
 ///
 /// Helps us ensure that each shader we compile (which uses the shader module) links to a common module.
 const ShaderModule = struct {
+    const shader_manifest = @import("modules/shader/manifest.zon");
     module: *std.Build.Module,
 
     pub fn init(b: *std.Build, target: std.Build.ResolvedTarget) ShaderModule {
@@ -16,42 +18,73 @@ const ShaderModule = struct {
     }
 
     /// Appends a zig file with a shader module byte code inside of it in a fixed way
-    pub fn appendShaderModule(
+    fn appendShaderModule(
         self: ShaderModule,
         b: *std.Build,
         m: *std.Build.Module,
         kind: ShaderKind,
-        inp_path: std.Build.LazyPath,
-        out_name: []const u8,
+        import_name: []const u8,
+        entry: ShaderDescription,
     ) void {
         const comm_name = kind.glslcArgumentName();
-        const kind_name = kind.glslcKindName();
-
         const command = b.addSystemCommand(&.{"glslc"});
         command.addArg(b.fmt("-fshader-stage={s}", .{comm_name}));
         command.addArg("--target-env=vulkan1.0");
         command.addArg("-o");
-        const spirv = command.addOutputFileArg(b.fmt("{s}.{s}.spv", .{ out_name, kind_name }));
-        command.addFileArg(inp_path);
+        const spirv = command.addOutputFileArg(b.fmt("{s}.spv", .{import_name}));
+        command.addFileArg(b.path(entry.path));
 
         const temp_file = b.addWriteFiles();
         const temp_file_path = temp_file.add(
-            b.fmt("{s}.{s}.zig", .{ out_name, kind_name }),
+            b.fmt("{s}.zig", .{import_name}),
             b.fmt(
                 \\const lib = @import("shader");
                 \\const spirv align(4) = @embedFile("shader.spv").*;
                 \\pub const shader = lib.Shader{{
                 \\    .kind = .{s},
                 \\    .code = &spirv,
+                \\    .num_samplers = {d},
+                \\    .num_storage_textures = {d},
+                \\    .num_storage_buffers = {d},
+                \\    .num_uniform_buffers = {d},
                 \\}};
-            , .{@tagName(kind)}),
+            , .{
+                @tagName(kind),
+                entry.num_samplers,
+                entry.num_storage_textures,
+                entry.num_storage_buffers,
+                entry.num_uniform_buffers,
+            }),
         );
 
         const module = b.createModule(.{ .root_source_file = temp_file_path });
         module.addImport("shader", self.module);
         module.addAnonymousImport("shader.spv", .{ .root_source_file = spirv });
+        m.addImport(import_name, module);
+    }
 
-        m.addImport(b.fmt("{s}_{s}", .{ out_name, kind_name }), module);
+    pub fn appendManifest(self: ShaderModule, b: *std.Build, m: *std.Build.Module) void {
+        inline for (std.meta.fields(@TypeOf(shader_manifest.verts))) |field| {
+            const entry = @field(shader_manifest.verts, field.name);
+            self.appendShaderModule(b, m, .VERT, b.fmt("{s}_vert", .{field.name}), ShaderDescription{
+                .path = entry.path,
+                .num_samplers = entry.num_samplers,
+                .num_storage_textures = entry.num_storage_textures,
+                .num_storage_buffers = entry.num_storage_buffers,
+                .num_uniform_buffers = entry.num_uniform_buffers,
+            });
+        }
+
+        inline for (std.meta.fields(@TypeOf(shader_manifest.frags))) |field| {
+            const entry = @field(shader_manifest.frags, field.name);
+            self.appendShaderModule(b, m, .FRAG, b.fmt("{s}_frag", .{field.name}), ShaderDescription{
+                .path = entry.path,
+                .num_samplers = entry.num_samplers,
+                .num_storage_textures = entry.num_storage_textures,
+                .num_storage_buffers = entry.num_storage_buffers,
+                .num_uniform_buffers = entry.num_uniform_buffers,
+            });
+        }
     }
 };
 
@@ -67,11 +100,7 @@ pub fn build(b: *std.Build) void {
     });
     core.addImport("shader", shader.module);
 
-    shader.appendShaderModule(b, core, .VERT, b.path("modules/shader/triangle.vert"), "triangle");
-    shader.appendShaderModule(b, core, .FRAG, b.path("modules/shader/triangle.frag"), "triangle");
-    shader.appendShaderModule(b, core, .VERT, b.path("modules/shader/quad.vert"), "quad");
-    shader.appendShaderModule(b, core, .FRAG, b.path("modules/shader/quad.frag"), "quad");
-
+    shader.appendManifest(b, core);
 
     const sdl = b.dependency("sdl", .{
         .optimize = optimize,

@@ -1,0 +1,34 @@
+.{
+    .verts = .{
+        .quad = .{
+            .path = "modules/shader/quad.vert",
+            .num_samplers = 0,
+            .num_storage_textures = 0,
+            .num_storage_buffers = 1,
+            .num_uniform_buffers = 0,
+        },
+        .triangle = .{
+            .path = "modules/shader/triangle.vert",
+            .num_samplers = 0,
+            .num_storage_textures = 0,
+            .num_storage_buffers = 0,
+            .num_uniform_buffers = 0,
+        },
+    },
+    .frags = .{
+        .quad = .{
+            .path = "modules/shader/quad.frag",
+            .num_samplers = 0,
+            .num_storage_textures = 0,
+            .num_storage_buffers = 0,
+            .num_uniform_buffers = 0,
+        },
+        .triangle = .{
+            .path = "modules/shader/triangle.frag",
+            .num_samplers = 0,
+            .num_storage_textures = 0,
+            .num_storage_buffers = 0,
+            .num_uniform_buffers = 0,
+        },
+    },
+}
