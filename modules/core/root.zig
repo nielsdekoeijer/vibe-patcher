@@ -2,6 +2,23 @@ const std = @import("std");
 const sdl = @import("sdl3");
 const shader_module = @import("shader");
 
+/// What we send to the GPU
+pub const Vertex = extern struct {
+    xy: [2]f32,
+    uv: [2]f32,
+};
+
+/// Vertices of our example quad
+const ExampleQuadVertices = [4]Vertex{
+    .{ .xy = .{ -0.5, -0.5 }, .uv = .{ 0.0, 0.0 } },
+    .{ .xy = .{ 0.5, -0.5 }, .uv = .{ 1.0, 0.0 } },
+    .{ .xy = .{ 0.5, 0.5 }, .uv = .{ 1.0, 1.0 } },
+    .{ .xy = .{ -0.5, 0.5 }, .uv = .{ 0.0, 1.0 } },
+};
+
+/// Indices of our example quad
+const ExampleQuadIndices = [6]u16{ 0, 1, 2, 0, 2, 3 };
+
 /// Our error set for SDL3
 pub const SDL3Error = error{
     LibraryInitialization,
@@ -485,6 +502,12 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
     const triangle_frag = try SDL3GPUCreateShader(device, @import("triangle_frag").shader);
     defer SDL3GPUDestroyShader(device, triangle_frag);
+
+    const quad_vert = try SDL3GPUCreateShader(device, @import("quad_vert").shader);
+    defer SDL3GPUDestroyShader(device, quad_vert);
+
+    const quad_frag = try SDL3GPUCreateShader(device, @import("quad_frag").shader);
+    defer SDL3GPUDestroyShader(device, quad_frag);
 
     const window = try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
     defer SDL3DestroyWindow(window);

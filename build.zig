@@ -69,6 +69,9 @@ pub fn build(b: *std.Build) void {
 
     shader.appendShaderModule(b, core, .VERT, b.path("modules/shader/triangle.vert"), "triangle");
     shader.appendShaderModule(b, core, .FRAG, b.path("modules/shader/triangle.frag"), "triangle");
+    shader.appendShaderModule(b, core, .VERT, b.path("modules/shader/quad.vert"), "quad");
+    shader.appendShaderModule(b, core, .FRAG, b.path("modules/shader/quad.frag"), "quad");
+
 
     const sdl = b.dependency("sdl", .{
         .optimize = optimize,
