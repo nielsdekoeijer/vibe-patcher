@@ -360,14 +360,20 @@ fn SDL3GPUCreateShader(device: *sdl.SDL_GPUDevice, shader: shader_module.Shader)
     const sdl_shader = sdl.SDL_CreateGPUShader(
         device,
         &sdl.SDL_GPUShaderCreateInfo{
-            .code = shader.code.ptr,
             .code_size = shader.code.len,
+            .code = shader.code.ptr,
             .entrypoint = "main",
             .format = sdl.SDL_GPU_SHADERFORMAT_SPIRV,
             .stage = switch (shader.kind) {
                 .FRAG => sdl.SDL_GPU_SHADERSTAGE_FRAGMENT,
                 .VERT => sdl.SDL_GPU_SHADERSTAGE_VERTEX,
             },
+
+            // Remaining options
+            .num_samplers = 0,
+            .num_storage_buffers = 0,
+            .num_uniform_buffers = 0,
+            .num_storage_textures = 0,
         },
     ) orelse {
         return SDL3Error.GPUInteraction;
@@ -382,6 +388,88 @@ fn SDL3GPUDestroyShader(device: *sdl.SDL_GPUDevice, shader: *sdl.SDL_GPUShader) 
     std.log.info("Destroying SDL3 shader", .{});
 
     sdl.SDL_ReleaseGPUShader(device, shader);
+}
+
+/// Create an SDL3 graphics pipeline
+fn SDL3GPUCreateGraphicsPipeline(
+    device: *sdl.SDL_GPUDevice,
+    window: *sdl.SDL_Window,
+    vert: *sdl.SDL_GPUShader,
+    frag: *sdl.SDL_GPUShader,
+) SDL3Error!*sdl.SDL_GPUGraphicsPipeline {
+    const str = "Creating SDL3 GPU graphics pipeline...";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
+
+    const color_targets = [_]sdl.SDL_GPUColorTargetDescription{
+        sdl.SDL_GPUColorTargetDescription{
+            .format = sdl.SDL_GetGPUSwapchainTextureFormat(device, window),
+
+            // Remaining
+            .blend_state = std.mem.zeroes(sdl.SDL_GPUColorTargetBlendState),
+        },
+    };
+
+    const pipeline = sdl.SDL_CreateGPUGraphicsPipeline(
+        device,
+        &sdl.SDL_GPUGraphicsPipelineCreateInfo{
+            .vertex_shader = vert,
+            .fragment_shader = frag,
+            .primitive_type = sdl.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+            .target_info = sdl.SDL_GPUGraphicsPipelineTargetInfo{
+                .num_color_targets = 1,
+                .color_target_descriptions = &color_targets,
+
+                // Remaining
+                .depth_stencil_format = 0,
+                .has_depth_stencil_target = false,
+            },
+            .rasterizer_state = sdl.SDL_GPURasterizerState{
+                .fill_mode = sdl.SDL_GPU_FILLMODE_FILL,
+                .cull_mode = sdl.SDL_GPU_CULLMODE_NONE,
+
+                // Remaining
+                .depth_bias_clamp = 0,
+                .depth_bias_constant_factor = 0,
+                .depth_bias_slope_factor = 0,
+                .enable_depth_bias = false,
+                .enable_depth_clip = false,
+                .front_face = 0,
+            },
+            .multisample_state = std.mem.zeroes(sdl.SDL_GPUMultisampleState), // NOTE: disables it
+
+            // Remaining
+            .vertex_input_state = std.mem.zeroes(sdl.SDL_GPUVertexInputState),
+            .depth_stencil_state = std.mem.zeroes(sdl.SDL_GPUDepthStencilState),
+            .props = 0,
+        },
+    ) orelse {
+        return SDL3Error.GPUInteraction;
+    };
+
+    std.log.info("{s} OK", .{str});
+    return pipeline;
+}
+
+/// Destroy an SDL3 graphics pipeline
+fn SDL3GPUDestroyGraphicsPipeline(device: *sdl.SDL_GPUDevice, pipeline: *sdl.SDL_GPUGraphicsPipeline) void {
+    std.log.info("Destroying SDL3 graphics pipeline", .{});
+
+    sdl.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
+}
+
+/// Bind an SDL3 pipeline to a render pass
+fn SDL3GPUBindPipeline(render_pass: *sdl.SDL_GPURenderPass, pipeline: *sdl.SDL_GPUGraphicsPipeline) void {
+    std.log.debug("Binding SDL3 GPU graphics pipeline", .{});
+
+    sdl.SDL_BindGPUGraphicsPipeline(render_pass, pipeline);
+}
+
+/// Draw primatives using the bound pipeline
+fn SDL3GPUDrawPrimatives(render_pass: *sdl.SDL_GPURenderPass) void {
+    std.log.debug("Binding SDL3 GPU graphics pipeline", .{});
+
+    sdl.SDL_DrawGPUPrimitives(render_pass, 3, 1, 0, 0);
 }
 
 /// Main entrypoint into the program
@@ -403,6 +491,9 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
     try SDL3GPUClaimWindow(device, window);
     defer SDL3GPUDestroyWindow(device, window);
+
+    const pipeline = try SDL3GPUCreateGraphicsPipeline(device, window, triangle_vert, triangle_frag);
+    defer SDL3GPUDestroyGraphicsPipeline(device, pipeline);
 
     outer_loop: while (true) {
         event_loop: while (SDL3PollEvent()) |event| {
@@ -432,15 +523,28 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
         };
 
         const color_target_infos = [_]sdl.SDL_GPUColorTargetInfo{
-            std.mem.zeroInit(sdl.SDL_GPUColorTargetInfo, .{
+            sdl.SDL_GPUColorTargetInfo{
                 .texture = swapchain_texture.tex,
                 .load_op = sdl.SDL_GPU_LOADOP_CLEAR,
                 .store_op = sdl.SDL_GPU_STOREOP_STORE,
                 .clear_color = ClearColor,
-            }),
+
+                // Remaining
+                .mip_level = 0,
+                .resolve_mip_level = 0,
+                .cycle = false,
+                .resolve_layer = 0,
+                .resolve_texture = null,
+                .cycle_resolve_texture = false,
+                .layer_or_depth_plane = 0,
+            },
         };
 
         const render_pass = try SDL3BeginGPURenderPass(command_buffer, &color_target_infos, null);
+
+        SDL3GPUBindPipeline(render_pass, pipeline);
+        SDL3GPUDrawPrimatives(render_pass);
+
         SDL3EndGPURenderPass(render_pass);
 
         try SDL3SubmitGPUCommandBuffer(command_buffer);
