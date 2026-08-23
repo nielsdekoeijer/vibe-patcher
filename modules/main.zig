@@ -1,5 +1,5 @@
 const std = @import("std");
-const vibe_patcher = @import("vibe_patcher");
+const core = @import("core");
 
 pub const std_options = std.Options {
     .log_level = .info,
@@ -8,12 +8,12 @@ pub const std_options = std.Options {
 pub fn main(init: std.process.Init) !void {
     _ = init;
 
-    const options = vibe_patcher.ProgramSettings {
+    const options = core.ProgramSettings {
         .enable_gpu_debug = true,
         .shader_format = .spirv,
         .window_w = 640,
         .window_h = 480,
     };
 
-    try vibe_patcher.run(options);
+    try core.run(options);
 }

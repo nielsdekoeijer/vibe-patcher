@@ -1,5 +1,6 @@
 const std = @import("std");
 const sdl = @import("sdl3");
+const shader_module = @import("shader");
 
 /// Our error set for SDL3
 pub const SDL3Error = error{
@@ -350,6 +351,39 @@ fn SDL3PollEvent() ?sdl.SDL_Event {
     return null;
 }
 
+/// Load a SDL3 GPU shader from bytecode
+fn SDL3GPUCreateShader(device: *sdl.SDL_GPUDevice, shader: shader_module.Shader) SDL3Error!*sdl.SDL_GPUShader {
+    const str = "Creating SDL3 GPU shader...";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
+
+    const sdl_shader = sdl.SDL_CreateGPUShader(
+        device,
+        &sdl.SDL_GPUShaderCreateInfo{
+            .code = shader.code.ptr,
+            .code_size = shader.code.len,
+            .entrypoint = "main",
+            .format = sdl.SDL_GPU_SHADERFORMAT_SPIRV,
+            .stage = switch (shader.kind) {
+                .FRAG => sdl.SDL_GPU_SHADERSTAGE_FRAGMENT,
+                .VERT => sdl.SDL_GPU_SHADERSTAGE_VERTEX,
+            },
+        },
+    ) orelse {
+        return SDL3Error.GPUInteraction;
+    };
+
+    std.log.info("{s} OK", .{str});
+    return sdl_shader;
+}
+
+/// Release a SDL3 GPU shader
+fn SDL3GPUReleaseShader(device: *sdl.SDL_GPUDevice, shader: *sdl.SDL_GPUShader) void {
+    std.log.info("Releasing SDL3 shader from GPU device", .{});
+
+    sdl.SDL_ReleaseGPUShader(device, shader);
+}
+
 /// Main entrypoint into the program
 pub fn run(settings: ProgramSettings) SDL3Error!void {
     try SDL3Initialize();
@@ -357,6 +391,12 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
     const device = try SDL3CreateGPUDevice(settings.shader_format, settings.enable_gpu_debug);
     defer SDL3DestroyGPUDevice(device);
+
+    const triangle_vert = try SDL3GPUCreateShader(device, @import("triangle_vert").shader);
+    defer SDL3GPUReleaseShader(device, triangle_vert);
+
+    const triangle_frag = try SDL3GPUCreateShader(device, @import("triangle_frag").shader);
+    defer SDL3GPUReleaseShader(device, triangle_frag);
 
     const window = try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
     defer SDL3DestroyWindow(window);

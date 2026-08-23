@@ -1,0 +1,23 @@
+pub const ShaderKind = enum {
+    FRAG,
+    VERT,
+
+    pub fn glslcArgumentName(self: ShaderKind) []const u8 {
+        return switch (self) {
+            .FRAG => "fragment",
+            .VERT => "vertex",
+        };
+    }
+
+    pub fn glslcKindName(self: ShaderKind) []const u8 {
+        return switch (self) {
+            .FRAG => "frag",
+            .VERT => "vert",
+        };
+    }
+};
+
+pub const Shader = struct {
+    code: []const u8,
+    kind: ShaderKind,
+};
