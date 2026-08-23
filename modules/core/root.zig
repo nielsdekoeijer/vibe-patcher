@@ -215,7 +215,7 @@ fn SDL3CreateWindow(title: [*:0]const u8, w: u32, h: u32) SDL3Error!*sdl.SDL_Win
 
 /// Destroy the SDL3 window
 fn SDL3DestroyWindow(window: *sdl.SDL_Window) void {
-    std.log.info("Destroying SDL3 GPU device", .{});
+    std.log.info("Destroying SDL3 GPU Window", .{});
     sdl.SDL_DestroyWindow(window);
 }
 
@@ -232,8 +232,8 @@ fn SDL3GPUClaimWindow(device: *sdl.SDL_GPUDevice, window: *sdl.SDL_Window) SDL3E
 }
 
 /// Claim the SDL3 window from the GPU
-fn SDL3GPUReleaseWindow(device: *sdl.SDL_GPUDevice, window: *sdl.SDL_Window) void {
-    std.log.info("Releasing SDL3 window from GPU device", .{});
+fn SDL3GPUDestroyWindow(device: *sdl.SDL_GPUDevice, window: *sdl.SDL_Window) void {
+    std.log.info("Destroying SDL3 window", .{});
 
     sdl.SDL_ReleaseWindowFromGPUDevice(device, window);
 }
@@ -377,9 +377,9 @@ fn SDL3GPUCreateShader(device: *sdl.SDL_GPUDevice, shader: shader_module.Shader)
     return sdl_shader;
 }
 
-/// Release a SDL3 GPU shader
-fn SDL3GPUReleaseShader(device: *sdl.SDL_GPUDevice, shader: *sdl.SDL_GPUShader) void {
-    std.log.info("Releasing SDL3 shader from GPU device", .{});
+/// Destroy a SDL3 GPU shader
+fn SDL3GPUDestroyShader(device: *sdl.SDL_GPUDevice, shader: *sdl.SDL_GPUShader) void {
+    std.log.info("Destroying SDL3 shader", .{});
 
     sdl.SDL_ReleaseGPUShader(device, shader);
 }
@@ -393,16 +393,16 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     defer SDL3DestroyGPUDevice(device);
 
     const triangle_vert = try SDL3GPUCreateShader(device, @import("triangle_vert").shader);
-    defer SDL3GPUReleaseShader(device, triangle_vert);
+    defer SDL3GPUDestroyShader(device, triangle_vert);
 
     const triangle_frag = try SDL3GPUCreateShader(device, @import("triangle_frag").shader);
-    defer SDL3GPUReleaseShader(device, triangle_frag);
+    defer SDL3GPUDestroyShader(device, triangle_frag);
 
     const window = try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
     defer SDL3DestroyWindow(window);
 
     try SDL3GPUClaimWindow(device, window);
-    defer SDL3GPUReleaseWindow(device, window);
+    defer SDL3GPUDestroyWindow(device, window);
 
     outer_loop: while (true) {
         event_loop: while (SDL3PollEvent()) |event| {
