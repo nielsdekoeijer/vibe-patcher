@@ -62,6 +62,7 @@
           pkgs.libxi
           pkgs.udev
           pkgs.vulkan-validation-layers
+          pkgs.shaderc
         ];
       in
       {
