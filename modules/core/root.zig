@@ -6,18 +6,54 @@ const shader_module = @import("shader");
 pub const Vertex = extern struct {
     xy: [2]f32,
     uv: [2]f32,
+
+    const VertexBufferDescription = [_]sdl.SDL_GPUVertexBufferDescription{
+        .{ .slot = 0, .pitch = @sizeOf(Vertex), .input_rate = sdl.SDL_GPU_VERTEXINPUTRATE_VERTEX, .instance_step_rate = 0 },
+    };
+
+    const VertexAttributes = [_]sdl.SDL_GPUVertexAttribute{
+        .{ .location = 0, .buffer_slot = 0, .format = sdl.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "xy") },
+        .{ .location = 1, .buffer_slot = 0, .format = sdl.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },
+    };
+
+    pub fn getVertexInputState() sdl.SDL_GPUVertexInputState {
+        return sdl.SDL_GPUVertexInputState{
+            .vertex_buffer_descriptions = &Vertex.VertexBufferDescription,
+            .num_vertex_buffers = Vertex.VertexBufferDescription.len,
+            .vertex_attributes = &Vertex.VertexAttributes,
+            .num_vertex_attributes = Vertex.VertexAttributes.len,
+        };
+    }
 };
 
-/// Vertices of our example quad
-const ExampleQuadVertices = [4]Vertex{
-    .{ .xy = .{ -0.5, -0.5 }, .uv = .{ 0.0, 0.0 } },
-    .{ .xy = .{ 0.5, -0.5 }, .uv = .{ 1.0, 0.0 } },
-    .{ .xy = .{ 0.5, 0.5 }, .uv = .{ 1.0, 1.0 } },
-    .{ .xy = .{ -0.5, 0.5 }, .uv = .{ 0.0, 1.0 } },
-};
+/// Helper struct that manages a quad
+pub const Quad = struct {
+    const indices = [6]u16{ 0, 1, 2, 0, 2, 3 };
+    vertices: [4]Vertex,
 
-/// Indices of our example quad
-const ExampleQuadIndices = [6]u16{ 0, 1, 2, 0, 2, 3 };
+    pub fn init(x: f32, y: f32, w: f32, h: f32) Quad {
+        return Quad{
+            .vertices = .{
+                .{
+                    .xy = .{ x + 0, y + 0 },
+                    .uv = .{ 0.0, 0.0 },
+                },
+                .{
+                    .xy = .{ x + w, y + 0 },
+                    .uv = .{ 1.0, 0.0 },
+                },
+                .{
+                    .xy = .{ x + w, y + h },
+                    .uv = .{ 1.0, 1.0 },
+                },
+                .{
+                    .xy = .{ x + 0, y + h },
+                    .uv = .{ 0.0, 1.0 },
+                },
+            },
+        };
+    }
+};
 
 /// Our error set for SDL3
 pub const SDL3Error = error{
@@ -26,6 +62,12 @@ pub const SDL3Error = error{
     WindowInitialization,
     GPUInitialization,
     GPUInteraction,
+};
+
+/// Ways of using SDL3 buffers
+pub const SDL3BufferUsage = enum(u32) {
+    VERTEX = sdl.SDL_GPU_BUFFERUSAGE_VERTEX,
+    INDEX = sdl.SDL_GPU_BUFFERUSAGE_INDEX,
 };
 
 /// Ergonomic wrapper to specify the SDL3 shader backend
@@ -413,6 +455,7 @@ fn SDL3GPUCreateGraphicsPipeline(
     window: *sdl.SDL_Window,
     vert: *sdl.SDL_GPUShader,
     frag: *sdl.SDL_GPUShader,
+    vertex_input_state: sdl.SDL_GPUVertexInputState,
 ) SDL3Error!*sdl.SDL_GPUGraphicsPipeline {
     const str = "Creating SDL3 GPU graphics pipeline...";
     std.log.info("{s}...", .{str});
@@ -454,9 +497,9 @@ fn SDL3GPUCreateGraphicsPipeline(
                 .front_face = 0,
             },
             .multisample_state = std.mem.zeroes(sdl.SDL_GPUMultisampleState), // NOTE: disables it
+            .vertex_input_state = vertex_input_state,
 
             // Remaining
-            .vertex_input_state = std.mem.zeroes(sdl.SDL_GPUVertexInputState),
             .depth_stencil_state = std.mem.zeroes(sdl.SDL_GPUDepthStencilState),
             .props = 0,
         },
@@ -482,11 +525,124 @@ fn SDL3GPUBindPipeline(render_pass: *sdl.SDL_GPURenderPass, pipeline: *sdl.SDL_G
     sdl.SDL_BindGPUGraphicsPipeline(render_pass, pipeline);
 }
 
-/// Draw primatives using the bound pipeline
-fn SDL3GPUDrawPrimatives(render_pass: *sdl.SDL_GPURenderPass) void {
-    std.log.debug("Binding SDL3 GPU graphics pipeline", .{});
+/// Bind a number of SDL3 vertex buffers to a render pass
+fn SDL3GPUBindVertexBuffers(
+    render_pass: *sdl.SDL_GPURenderPass,
+    buffers: anytype,
+) void {
+    std.log.debug("Binding SDL3 GPU vertex buffers", .{});
 
-    sdl.SDL_DrawGPUPrimitives(render_pass, 3, 1, 0, 0);
+    var bindings: [buffers.len]sdl.SDL_GPUBufferBinding = undefined;
+    inline for (buffers, 0..) |buf, i| {
+        bindings[i] = .{ .buffer = buf, .offset = 0 };
+    }
+
+    sdl.SDL_BindGPUVertexBuffers(render_pass, 0, &bindings, buffers.len);
+}
+
+/// Bind SDL3 index buffer to a render pass
+fn SDL3GPUBindIndexBuffer(
+    render_pass: *sdl.SDL_GPURenderPass,
+    buffer: *sdl.SDL_GPUBuffer,
+) void {
+    std.log.debug("Binding SDL3 GPU index buffer", .{});
+
+    sdl.SDL_BindGPUIndexBuffer(
+        render_pass,
+        &sdl.SDL_GPUBufferBinding{ .buffer = buffer, .offset = 0 },
+        sdl.SDL_GPU_INDEXELEMENTSIZE_16BIT,
+    );
+}
+
+/// Draw primatives indexed using bound pipeline and vertex + index buffers
+fn SDL3GPUDrawIndexed(
+    render_pass: *sdl.SDL_GPURenderPass,
+    num_indices: u32,
+) void {
+    std.log.debug("Drawing on SDL3 GPU in indexed fashion", .{});
+
+    sdl.SDL_DrawGPUIndexedPrimitives(render_pass, num_indices, 1, 0, 0, 0);
+}
+
+/// Create an SDL3 GPU buffer
+fn SDL3GPUCreateBuffer(
+    device: *sdl.SDL_GPUDevice,
+    comptime usages: []const SDL3BufferUsage,
+    size: u32,
+) SDL3Error!*sdl.SDL_GPUBuffer {
+    const str = "Creating SDL3 GPU buffer...";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
+
+    var usage: u32 = 0;
+    for (usages) |u| usage |= @intFromEnum(u);
+
+    const buffer = sdl.SDL_CreateGPUBuffer(device, &sdl.SDL_GPUBufferCreateInfo{
+        .size = size,
+        .usage = usage,
+
+        // Remaining
+        .props = 0,
+    }) orelse {
+        return SDL3Error.GPUInteraction;
+    };
+
+    std.log.info("{s} OK", .{str});
+    return buffer;
+}
+
+/// Destroy an SDL3 GPU buffer
+fn SDL3GPUDestroyBuffer(device: *sdl.SDL_GPUDevice, buffer: *sdl.SDL_GPUBuffer) void {
+    std.log.info("Destroying SDL3 buffer", .{});
+
+    sdl.SDL_ReleaseGPUBuffer(device, buffer);
+}
+
+/// Upload buffer to SDL3 GPU
+fn SDL3GPUBufferUpload(
+    device: *sdl.SDL_GPUDevice,
+    target: *sdl.SDL_GPUBuffer,
+    bytes: []const u8,
+) SDL3Error!void {
+    const str = "Uploading to SDL3 GPU buffer";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
+
+    const transfer = sdl.SDL_CreateGPUTransferBuffer(
+        device,
+        &sdl.SDL_GPUTransferBufferCreateInfo{
+            .usage = sdl.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+            .size = @intCast(bytes.len),
+            .props = 0,
+        },
+    ) orelse {
+        return SDL3Error.GPUInteraction;
+    };
+    defer sdl.SDL_ReleaseGPUTransferBuffer(device, transfer);
+
+    {
+        const mapped = sdl.SDL_MapGPUTransferBuffer(device, transfer, false) orelse {
+            return SDL3Error.GPUInteraction;
+        };
+        defer sdl.SDL_UnmapGPUTransferBuffer(device, transfer);
+
+        @memcpy(@as([*]u8, @ptrCast(mapped))[0..bytes.len], bytes);
+    }
+
+    {
+        const cmd = try SDL3AcquireGPUCommandBuffer(device);
+        const copy_pass = sdl.SDL_BeginGPUCopyPass(cmd) orelse return SDL3Error.GPUInteraction;
+        sdl.SDL_UploadToGPUBuffer(
+            copy_pass,
+            &sdl.SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer, .offset = 0 },
+            &sdl.SDL_GPUBufferRegion{ .buffer = target, .offset = 0, .size = @intCast(bytes.len) },
+            false,
+        );
+        sdl.SDL_EndGPUCopyPass(copy_pass);
+        try SDL3SubmitGPUCommandBuffer(cmd);
+    }
+
+    std.log.info("{s} OK", .{str});
 }
 
 /// Main entrypoint into the program
@@ -496,12 +652,6 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
     const device = try SDL3CreateGPUDevice(settings.shader_format, settings.enable_gpu_debug);
     defer SDL3DestroyGPUDevice(device);
-
-    const triangle_vert = try SDL3GPUCreateShader(device, @import("triangle_vert").shader);
-    defer SDL3GPUDestroyShader(device, triangle_vert);
-
-    const triangle_frag = try SDL3GPUCreateShader(device, @import("triangle_frag").shader);
-    defer SDL3GPUDestroyShader(device, triangle_frag);
 
     const quad_vert = try SDL3GPUCreateShader(device, @import("quad_vert").shader);
     defer SDL3GPUDestroyShader(device, quad_vert);
@@ -515,8 +665,28 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     try SDL3GPUClaimWindow(device, window);
     defer SDL3GPUDestroyWindow(device, window);
 
-    const pipeline = try SDL3GPUCreateGraphicsPipeline(device, window, triangle_vert, triangle_frag);
-    defer SDL3GPUDestroyGraphicsPipeline(device, pipeline);
+    const quad = Quad.init(-0.5, -0.5, 1.0, 1.0);
+
+    const quad_pipeline = try SDL3GPUCreateGraphicsPipeline(
+        device,
+        window,
+        quad_vert,
+        quad_frag,
+        Vertex.getVertexInputState(),
+    );
+    defer SDL3GPUDestroyGraphicsPipeline(device, quad_pipeline);
+
+    const vbuffer_size = @sizeOf(@TypeOf(quad.vertices));
+    const vbuffer_mode = &[_]SDL3BufferUsage{.VERTEX};
+    const vbuffer = try SDL3GPUCreateBuffer(device, vbuffer_mode, vbuffer_size);
+    defer SDL3GPUDestroyBuffer(device, vbuffer);
+    try SDL3GPUBufferUpload(device, vbuffer, std.mem.sliceAsBytes(quad.vertices[0..]));
+
+    const ibuffer_size = @sizeOf(@TypeOf(Quad.indices));
+    const ibuffer_mode = &[_]SDL3BufferUsage{.INDEX};
+    const ibuffer = try SDL3GPUCreateBuffer(device, ibuffer_mode, ibuffer_size);
+    defer SDL3GPUDestroyBuffer(device, ibuffer);
+    try SDL3GPUBufferUpload(device, ibuffer, std.mem.sliceAsBytes(Quad.indices[0..]));
 
     outer_loop: while (true) {
         event_loop: while (SDL3PollEvent()) |event| {
@@ -565,8 +735,10 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
         const render_pass = try SDL3BeginGPURenderPass(command_buffer, &color_target_infos, null);
 
-        SDL3GPUBindPipeline(render_pass, pipeline);
-        SDL3GPUDrawPrimatives(render_pass);
+        SDL3GPUBindPipeline(render_pass, quad_pipeline);
+        SDL3GPUBindVertexBuffers(render_pass, .{vbuffer});
+        SDL3GPUBindIndexBuffer(render_pass, ibuffer);
+        SDL3GPUDrawIndexed(render_pass, Quad.indices.len);
 
         SDL3EndGPURenderPass(render_pass);
 
