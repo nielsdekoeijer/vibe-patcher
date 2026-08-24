@@ -17,6 +17,28 @@ pub const QuadInstance = extern struct {
     }
 };
 
+/// Helper struct for our projection matrix
+pub const ProjectionMatrix = extern struct {
+    data: [16]f32,
+
+    pub fn ortho(x: f32, y: f32, w: f32, h: f32) ProjectionMatrix {
+        var data: [16]f32 = std.mem.zeroes([16]f32);
+        data[0] = 2.0 / w;
+        data[5] = -2.0 / h;
+        data[10] = 1.0;
+        data[12] = -(2.0 * x + w) / w;
+        data[13] = (2.0 * y + h) / h;
+        data[15] = 1.0;
+        return ProjectionMatrix{
+            .data = data,
+        };
+    }
+
+    pub fn screen(w: f32, h: f32) ProjectionMatrix {
+        return ortho(0, 0, w, h);
+    }
+};
+
 /// Our error set for SDL3
 pub const SDL3Error = error{
     LibraryInitialization,
@@ -516,6 +538,22 @@ fn SDL3GPUBindVertexStorageBuffers(
     sdl.SDL_BindGPUVertexStorageBuffers(render_pass, 0, &bufs, buffers.len);
 }
 
+/// Push raw bytes to a vertex uniform slot on an SDL3 GPU command buffer.
+fn SDL3GPUPushVertexUniformData(
+    command_buffer: *sdl.SDL_GPUCommandBuffer,
+    slot: u32,
+    bytes: []const u8,
+) void {
+    std.log.debug("Pushing SDL3 GPU vertex uniform data", .{});
+
+    sdl.SDL_PushGPUVertexUniformData(
+        command_buffer,
+        slot,
+        bytes.ptr,
+        @intCast(bytes.len),
+    );
+}
+
 /// Bind SDL3 index buffer to a render pass, I hardcode indices to be 16 bit
 fn SDL3GPUBindIndexBuffer(
     render_pass: *sdl.SDL_GPURenderPass,
@@ -530,7 +568,7 @@ fn SDL3GPUBindIndexBuffer(
     );
 }
 
-/// Draw primitives non-indexed: `num_vertices` per instance, `num_instances` total. 
+/// Draw primitives non-indexed: `num_vertices` per instance, `num_instances` total.
 ///
 /// NOTE: We start at the beginning of the list in both cases.
 fn SDL3GPUDraw(
@@ -654,8 +692,8 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     defer SDL3GPUDestroyGraphicsPipeline(device, quad_pipeline);
 
     const quad_list = [_]QuadInstance{
-        QuadInstance.init(-0.5, -0.5, 1.0, 1.0, .{ 1.0, 0.5, 0.2, 1.0 }),
-        QuadInstance.init(0.1, 0.1, 0.4, 0.4, .{ 0.2, 0.6, 1.0, 1.0 }),
+        QuadInstance.init(20, 20, 200, 100, .{ 1.0, 0.5, 0.2, 1.0 }),
+        QuadInstance.init(260, 80, 160, 160, .{ 0.2, 0.6, 1.0, 1.0 }),
     };
     const quad_buffers = try SDL3GPUCreateBuffer(
         device,
@@ -671,6 +709,9 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             switch (event.type) {
                 sdl.SDL_EVENT_QUIT => {
                     break :outer_loop;
+                },
+                sdl.SDL_EVENT_MOUSE_BUTTON_DOWN => {
+                    std.log.info("Click at ({d}, {d})", .{ event.button.x, event.button.y });
                 },
                 sdl.SDL_EVENT_KEY_DOWN => {
                     switch (event.key.key) {
@@ -713,8 +754,13 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
         const render_pass = try SDL3BeginGPURenderPass(command_buffer, &color_target_infos, null);
 
+        const w: f32 = @floatFromInt(swapchain_texture.w);
+        const h: f32 = @floatFromInt(swapchain_texture.h);
+        const projection = ProjectionMatrix.screen(w, h);
+
         SDL3GPUBindPipeline(render_pass, quad_pipeline);
         SDL3GPUBindVertexStorageBuffers(render_pass, .{quad_buffers});
+        SDL3GPUPushVertexUniformData(command_buffer, 0, std.mem.asBytes(&projection));
         SDL3GPUDraw(render_pass, QuadInstance.VertexCount, quad_list.len);
         SDL3EndGPURenderPass(render_pass);
 

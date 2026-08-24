@@ -6,6 +6,7 @@ struct Quad {
 };
 
 layout(std430, set = 0, binding = 0) readonly buffer Quads { Quad quads[]; };
+layout(std140, set = 1, binding = 0) uniform Camera { mat4 projectionMatrix; };
 layout(location = 0) out vec4 out_quad_color;
 
 void main() {
@@ -15,6 +16,6 @@ void main() {
     // exploit this fact to get the corder
     vec2 corner = vec2(gl_VertexIndex & 1, (gl_VertexIndex >> 1) & 1);
 
-    gl_Position = vec4(q.shape.xy + corner * q.shape.zw, 0.0, 1.0);
+    gl_Position = projectionMatrix * vec4(q.shape.xy + corner * q.shape.zw, 0.0, 1.0);
     out_quad_color = q.color;
 }
