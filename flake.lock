@@ -16,6 +16,24 @@
         "type": "github"
       }
     },
+    "msdf-atlas-gen": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1778948996,
+        "narHash": "sha256-+iMf83v0FXB7rJOIOxBpokWa8njOYQjFTlQXNHiojDU=",
+        "ref": "refs/heads/master",
+        "rev": "6148900d59423059bafde2f51a0cb303184404bd",
+        "revCount": 57,
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/Chlumsky/msdf-atlas-gen"
+      },
+      "original": {
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/Chlumsky/msdf-atlas-gen"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1787001381,
@@ -34,6 +52,7 @@
     },
     "root": {
       "inputs": {
+        "msdf-atlas-gen": "msdf-atlas-gen",
         "nixpkgs": "nixpkgs",
         "utils": "utils",
         "zig-flake": "zig-flake",
