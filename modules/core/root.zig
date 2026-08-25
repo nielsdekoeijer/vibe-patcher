@@ -34,8 +34,39 @@ pub const ProjectionMatrix = extern struct {
         };
     }
 
-    pub fn screen(w: f32, h: f32) ProjectionMatrix {
-        return ortho(0, 0, w, h);
+    pub fn screen(w: u32, h: u32) ProjectionMatrix {
+        return ortho(0, 0, @floatFromInt(w), @floatFromInt(h));
+    }
+};
+
+/// Describes the UI component
+pub const UserInterface = struct {
+    menubar: MenubarElement,
+};
+
+/// Describes the menubar
+pub const MenubarElement = struct {
+    pub const BackgroundColor: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 };
+    pub const TextColor: [4]f32 = .{ 0.0, 0.0, 0.0, 1.0 };
+    pub const BarHeight: f32 = 24.0;
+
+    background_shape: [4]f32,
+    dirty: bool,
+
+    pub fn init(w: u32, h: u32) MenubarElement {
+        _ = h;
+
+        return MenubarElement{
+            .background_shape = .{ 0, 0, @floatFromInt(w), BarHeight },
+            .dirty = true,
+        };
+    }
+
+    pub fn generate_quad_instances(self: MenubarElement) [1]QuadInstance {
+        return [_]QuadInstance{QuadInstance{
+            .color = MenubarElement.BackgroundColor,
+            .shape = self.background_shape,
+        }};
     }
 };
 
@@ -584,19 +615,16 @@ fn SDL3GPUDraw(
 /// Create an SDL3 GPU buffer
 fn SDL3GPUCreateBuffer(
     device: *sdl.SDL_GPUDevice,
-    comptime usages: []const SDL3BufferUsage,
+    usage: SDL3BufferUsage,
     size: u32,
 ) SDL3Error!*sdl.SDL_GPUBuffer {
     const str = "Creating SDL3 GPU buffer...";
     std.log.info("{s}...", .{str});
     errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
-    var usage: u32 = 0;
-    for (usages) |u| usage |= @intFromEnum(u);
-
     const buffer = sdl.SDL_CreateGPUBuffer(device, &sdl.SDL_GPUBufferCreateInfo{
         .size = size,
-        .usage = usage,
+        .usage = @intFromEnum(usage),
 
         // Remaining
         .props = 0,
@@ -691,20 +719,21 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     );
     defer SDL3GPUDestroyGraphicsPipeline(device, quad_pipeline);
 
-    const quad_list = [_]QuadInstance{
-        QuadInstance.init(20, 20, 200, 100, .{ 1.0, 0.5, 0.2, 1.0 }),
-        QuadInstance.init(260, 80, 160, 160, .{ 0.2, 0.6, 1.0, 1.0 }),
-    };
-    const quad_buffers = try SDL3GPUCreateBuffer(
-        device,
-        &[_]SDL3BufferUsage{.GRAPHICS_STORAGE_READ},
-        @sizeOf(@TypeOf(quad_list)),
-    );
-    defer SDL3GPUDestroyBuffer(device, quad_buffers);
-
-    try SDL3GPUBufferUpload(device, quad_buffers, std.mem.sliceAsBytes(quad_list[0..]));
-
     outer_loop: while (true) {
+        const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
+
+        const swapchain_texture = try SDL3AcquireGPUSwapchainTextureBlocking(command_buffer, window) orelse {
+            try SDL3SubmitGPUCommandBuffer(command_buffer);
+            continue :outer_loop;
+        };
+
+        const menubar = MenubarElement.init(swapchain_texture.w, swapchain_texture.h);
+        var quad_list = menubar.generate_quad_instances();
+
+        const quad_buffers = try SDL3GPUCreateBuffer(device, .GRAPHICS_STORAGE_READ, @sizeOf(@TypeOf(quad_list)));
+        defer SDL3GPUDestroyBuffer(device, quad_buffers);
+        try SDL3GPUBufferUpload(device, quad_buffers, std.mem.sliceAsBytes(quad_list[0..]));
+
         event_loop: while (SDL3PollEvent()) |event| {
             switch (event.type) {
                 sdl.SDL_EVENT_QUIT => {
@@ -727,13 +756,6 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             continue :event_loop;
         }
 
-        const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
-
-        const swapchain_texture = try SDL3AcquireGPUSwapchainTextureBlocking(command_buffer, window) orelse {
-            try SDL3SubmitGPUCommandBuffer(command_buffer);
-            continue :outer_loop;
-        };
-
         const color_target_infos = [_]sdl.SDL_GPUColorTargetInfo{
             sdl.SDL_GPUColorTargetInfo{
                 .texture = swapchain_texture.tex,
@@ -754,9 +776,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
         const render_pass = try SDL3BeginGPURenderPass(command_buffer, &color_target_infos, null);
 
-        const w: f32 = @floatFromInt(swapchain_texture.w);
-        const h: f32 = @floatFromInt(swapchain_texture.h);
-        const projection = ProjectionMatrix.screen(w, h);
+        const projection = ProjectionMatrix.screen(swapchain_texture.w, swapchain_texture.h);
 
         SDL3GPUBindPipeline(render_pass, quad_pipeline);
         SDL3GPUBindVertexStorageBuffers(render_pass, .{quad_buffers});

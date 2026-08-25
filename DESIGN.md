@@ -36,12 +36,15 @@ origin) except `canvas`, which is **world space** (`Camera2D`, scissor-clipped).
 | View            | Zoom In, Zoom Out, Fit, Reset Camera, Toggle Grid            |
 
 ---
-
-## `toolbar`
+## `tool bar`
 
 * Object palette and view controls. Edit-mode chrome.
 * Dimensions X: `[origin : end]`
 * Dimensions Y: `[origin : menu_bar_h + toolbar_h]`
+
+| Property        | Spec                                                         |
+|-----------------|--------------------------------------------------------------|
+| Zoom            | Denotes how far the canvas is zoomed in                      |
 
 ---
 
@@ -99,4 +102,15 @@ origin) except `canvas`, which is **world space** (`Camera2D`, scissor-clipped).
 * Dimensions X: `[origin : end]`
 * Dimensions Y: `[origin + end - status_h : origin + end]`
 
+| Property        | Spec                                                         |
+|-----------------|--------------------------------------------------------------|
+| Lock/Unlock     | Lock or unlock the canvas                                    |
 
+---
+
+## Shortcuts
+
+* n -> object
+* m -> message
+* c -> comment
+* control -> interaction mode in locked mode
