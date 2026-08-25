@@ -2,6 +2,10 @@ const std = @import("std");
 const sdl = @import("sdl3");
 const shader_module = @import("shader");
 
+const QuadVert = @import("quad_vert").shader;
+const QuadFrag = @import("quad_frag").shader;
+const RobotoSansRegular16 = @import("roboto_mono_regular_16").font;
+
 /// Helper struct that manages the input and outputs for our quad shadser
 pub const QuadInstance = extern struct {
     const VertexCount = 4;
@@ -692,16 +696,22 @@ fn SDL3GPUBufferUpload(
 
 /// Main entrypoint into the program
 pub fn run(settings: ProgramSettings) SDL3Error!void {
+    std.log.info("Font loaded: atlas {d}x{d}, {d} glyphs", .{
+        RobotoSansRegular16.config.atlas.width,
+        RobotoSansRegular16.config.atlas.height,
+        RobotoSansRegular16.config.glyphs.len,
+    });
+
     try SDL3Initialize();
     defer SDL3Quit();
 
     const device = try SDL3CreateGPUDevice(settings.shader_format, settings.enable_gpu_debug);
     defer SDL3DestroyGPUDevice(device);
 
-    const quad_vert = try SDL3GPUCreateShader(device, @import("quad_vert").shader);
+    const quad_vert = try SDL3GPUCreateShader(device, QuadVert);
     defer SDL3GPUDestroyShader(device, quad_vert);
 
-    const quad_frag = try SDL3GPUCreateShader(device, @import("quad_frag").shader);
+    const quad_frag = try SDL3GPUCreateShader(device, QuadFrag);
     defer SDL3GPUDestroyShader(device, quad_frag);
 
     const window = try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
@@ -719,33 +729,36 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     );
     defer SDL3GPUDestroyGraphicsPipeline(device, quad_pipeline);
 
-    outer_loop: while (true) {
-        const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
+    var menubar = MenubarElement.init(settings.window_w, settings.window_h);
 
+    const QuadCapacity = 4096;
+    const quad_buffer = try SDL3GPUCreateBuffer(device, .GRAPHICS_STORAGE_READ, QuadCapacity * @sizeOf(QuadInstance));
+    defer SDL3GPUDestroyBuffer(device, quad_buffer);
+    var quad_count: u32 = 0;
+
+    var should_run = true;
+    while (should_run) {
+        const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
         const swapchain_texture = try SDL3AcquireGPUSwapchainTextureBlocking(command_buffer, window) orelse {
             try SDL3SubmitGPUCommandBuffer(command_buffer);
-            continue :outer_loop;
+            continue;
         };
 
-        const menubar = MenubarElement.init(swapchain_texture.w, swapchain_texture.h);
-        var quad_list = menubar.generate_quad_instances();
-
-        const quad_buffers = try SDL3GPUCreateBuffer(device, .GRAPHICS_STORAGE_READ, @sizeOf(@TypeOf(quad_list)));
-        defer SDL3GPUDestroyBuffer(device, quad_buffers);
-        try SDL3GPUBufferUpload(device, quad_buffers, std.mem.sliceAsBytes(quad_list[0..]));
-
-        event_loop: while (SDL3PollEvent()) |event| {
+        while (SDL3PollEvent()) |event| {
             switch (event.type) {
                 sdl.SDL_EVENT_QUIT => {
-                    break :outer_loop;
+                    should_run = false;
                 },
                 sdl.SDL_EVENT_MOUSE_BUTTON_DOWN => {
                     std.log.info("Click at ({d}, {d})", .{ event.button.x, event.button.y });
                 },
+                sdl.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED => {
+                    menubar = MenubarElement.init(swapchain_texture.w, swapchain_texture.h);
+                },
                 sdl.SDL_EVENT_KEY_DOWN => {
                     switch (event.key.key) {
                         sdl.SDLK_Q => {
-                            break :outer_loop;
+                            should_run = false;
                         },
                         else => {},
                     }
@@ -753,7 +766,14 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                 else => {},
             }
 
-            continue :event_loop;
+            continue;
+        }
+
+        if (menubar.dirty) {
+            const quads = menubar.generate_quad_instances();
+            quad_count = quads.len;
+            try SDL3GPUBufferUpload(device, quad_buffer, std.mem.sliceAsBytes(quads[0..]));
+            menubar.dirty = false;
         }
 
         const color_target_infos = [_]sdl.SDL_GPUColorTargetInfo{
@@ -779,9 +799,9 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
         const projection = ProjectionMatrix.screen(swapchain_texture.w, swapchain_texture.h);
 
         SDL3GPUBindPipeline(render_pass, quad_pipeline);
-        SDL3GPUBindVertexStorageBuffers(render_pass, .{quad_buffers});
+        SDL3GPUBindVertexStorageBuffers(render_pass, .{quad_buffer});
         SDL3GPUPushVertexUniformData(command_buffer, 0, std.mem.asBytes(&projection));
-        SDL3GPUDraw(render_pass, QuadInstance.VertexCount, quad_list.len);
+        SDL3GPUDraw(render_pass, QuadInstance.VertexCount, quad_count);
         SDL3EndGPURenderPass(render_pass);
 
         try SDL3SubmitGPUCommandBuffer(command_buffer);
