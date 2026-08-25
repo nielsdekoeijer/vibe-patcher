@@ -2,6 +2,7 @@ const std = @import("std");
 
 const ShaderKind = @import("modules/shader/root.zig").ShaderKind;
 const ShaderDescription = @import("modules/shader/root.zig").ShaderDescription;
+const FontDescription = @import("modules/font/root.zig").FontDescription;
 
 /// Helper wrapper around the shader module.
 ///
@@ -11,10 +12,12 @@ const ShaderModule = struct {
     module: *std.Build.Module,
 
     pub fn init(b: *std.Build, target: std.Build.ResolvedTarget) ShaderModule {
-        return ShaderModule{ .module = b.addModule("shader", .{
-            .root_source_file = b.path("modules/shader/root.zig"),
-            .target = target,
-        }) };
+        return ShaderModule{
+            .module = b.addModule("shader", .{
+                .root_source_file = b.path("modules/shader/root.zig"),
+                .target = target,
+            }),
+        };
     }
 
     /// Appends a zig file with a shader module byte code inside of it in a fixed way
@@ -88,11 +91,78 @@ const ShaderModule = struct {
     }
 };
 
+/// Helper wrapper around the font module.
+const FontModule = struct {
+    const font_manifest = @import("modules/font/manifest.zon");
+    module: *std.Build.Module,
+
+    pub fn init(b: *std.Build, target: std.Build.ResolvedTarget) FontModule {
+        return FontModule{
+            .module = b.addModule("font", .{
+                .root_source_file = b.path("modules/font/root.zig"),
+                .target = target,
+            }),
+        };
+    }
+
+    /// Appends a zig file with a font module byte code inside of it in a fixed way
+    fn appendFontModule(
+        self: FontModule,
+        b: *std.Build,
+        m: *std.Build.Module,
+        import_name: []const u8,
+        entry: FontDescription,
+    ) void {
+        const command = b.addSystemCommand(&.{"msdf-atlas-gen"});
+        command.addArg("-font");
+        command.addArg(b.fmt("{s}", .{entry.path}));
+        command.addArg("-type");
+        command.addArg(b.fmt("msdf", .{}));
+        command.addArg("-format");
+        command.addArg(b.fmt("png", .{}));
+        command.addArg("-size");
+        command.addArg(b.fmt("32", .{}));
+        command.addArg("-pxrange");
+        command.addArg(b.fmt("4", .{}));
+
+        command.addArg("-imageout");
+        const data = command.addOutputFileArg(b.fmt("{s}.png", .{import_name}));
+
+        command.addArg("-json");
+        const json = command.addOutputFileArg(b.fmt("{s}.json", .{import_name}));
+
+        const temp_file = b.addWriteFiles();
+        const temp_file_path = temp_file.add(
+            b.fmt("{s}.zig", .{import_name}),
+            b.fmt(
+                \\const data align(4) = @embedFile(\"data\").*
+                \\const json align(4) = @embedFile(\"json\").*
+            , .{}),
+        );
+
+        const module = b.createModule(.{ .root_source_file = temp_file_path });
+        module.addImport("font", self.module);
+        module.addAnonymousImport("data", .{ .root_source_file = data });
+        module.addAnonymousImport("json", .{ .root_source_file = json });
+        m.addImport(import_name, module);
+    }
+
+    pub fn appendManifest(self: FontModule, b: *std.Build, m: *std.Build.Module) void {
+        inline for (std.meta.fields(@TypeOf(font_manifest.fonts))) |field| {
+            const entry = @field(font_manifest.fonts, field.name);
+            self.appendFontModule(b, m, b.fmt("{s}", .{field.name}), FontDescription{
+                .path = entry.path,
+            });
+        }
+    }
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const shader = ShaderModule.init(b, target);
+    const font = FontModule.init(b, target);
 
     const core = b.addModule("core", .{
         .root_source_file = b.path("modules/core/root.zig"),
@@ -101,6 +171,7 @@ pub fn build(b: *std.Build) void {
     core.addImport("shader", shader.module);
 
     shader.appendManifest(b, core);
+    font.appendManifest(b, core);
 
     const sdl = b.dependency("sdl", .{
         .optimize = optimize,
