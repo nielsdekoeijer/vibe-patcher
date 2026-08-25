@@ -198,9 +198,9 @@ const FontModule = struct {
         command.addArg("-type");
         command.addArg(b.fmt("msdf", .{}));
         command.addArg("-format");
-        command.addArg(b.fmt("png", .{}));
+        command.addArg(b.fmt("rgba", .{}));
         command.addArg("-size");
-        command.addArg(b.fmt("128", .{}));
+        command.addArg(b.fmt("32", .{}));
         command.addArg("-pxrange");
         command.addArg(b.fmt("4", .{}));
 
