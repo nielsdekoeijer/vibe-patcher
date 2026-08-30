@@ -807,7 +807,7 @@ fn SDL3GPUCreateTextureGlyph(device: *sdl.SDL_GPUDevice, w: u32, h: u32) SDL3Err
 
     const texture = sdl.SDL_CreateGPUTexture(device, &sdl.SDL_GPUTextureCreateInfo{
         .type = sdl.SDL_GPU_TEXTURETYPE_2D,
-        .format = sdl.SDL_GPU_TEXTUREFORMAT_R8_UNORM,
+        .format = sdl.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
         .usage = sdl.SDL_GPU_TEXTUREUSAGE_SAMPLER,
         .width = w,
         .height = h,

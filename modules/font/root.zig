@@ -165,7 +165,7 @@ pub fn FontAtlas(comptime configuration: FontConfiguration) type {
 }
 
 pub const Font = struct {
-    /// Raw atlas image bytes. For an R8 SDF, there is one byte per atlas pixel.
+    /// Raw atlas image bytes in the channel layout selected during generation.
     data: []const u8,
 
     /// Generated atlas, font-metric, and per-glyph metadata describing data.

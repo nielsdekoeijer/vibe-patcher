@@ -198,7 +198,7 @@ const FontModule = struct {
         command.addArg("-font");
         command.addArg(b.fmt("{s}", .{entry.path}));
         command.addArg("-type");
-        command.addArg(b.fmt("sdf", .{}));
+        command.addArg(b.fmt("mtsdf", .{}));
         command.addArg("-format");
         command.addArg(b.fmt("bin", .{}));
         command.addArg("-pxrange");
