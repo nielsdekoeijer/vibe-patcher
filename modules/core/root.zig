@@ -9,7 +9,7 @@ const QuadFrag = @import("quad_frag").shader;
 const GlyphVert = @import("glyph_vert").shader;
 const GlyphFrag = @import("glyph_frag").shader;
 
-const RobotoSansRegular16 = @import("roboto_mono_regular_16").font;
+const InterRegular14 = @import("inter_regular_14").font;
 
 /// Helper struct for our projection matrix
 pub const ProjectionMatrixUniform = extern struct {
@@ -74,15 +74,19 @@ pub const GlyphInstance = extern struct {
     color: [4]f32,
 
     pub fn init(char: u8, pos: *[2]f32, color: [4]f32) ?GlyphInstance {
-        const glyph = &font_module.FontAtlas(RobotoSansRegular16.config).CharacterGlyphs[char];
+        const glyph = &font_module.FontAtlas(InterRegular14.config).CharacterGlyphs[char];
 
+        const glyph_x = pos[0];
         pos[0] += glyph.x_advance;
 
         if (glyph.quad) |g| {
-            const loc: [4]f32 = .{ pos[0] + g.shape[0], pos[1] - g.shape[1], g.shape[2], g.shape[3] };
-
             return GlyphInstance{
-                .shape = loc,
+                .shape = .{
+                    glyph_x + g.shape[0],
+                    pos[1] - g.shape[1],
+                    g.shape[2],
+                    g.shape[3],
+                },
                 .uv = g.uv,
                 .color = color,
             };
@@ -111,9 +115,9 @@ pub const UserInterface = struct {
 
 /// Describes the menubar
 pub const MenubarElement = struct {
-    pub const BackgroundColor: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 };
-    pub const TextColor: [4]f32 = .{ 0.0, 0.0, 0.0, 1.0 };
-    pub const BarHeight: f32 = 24.0;
+    pub const BackgroundColor: [4]f32 = .{ 0.13333334, 0.13725491, 0.15686275, 1.0 };
+    pub const TextColor: [4]f32 = .{ 0.9098039, 0.9137255, 0.92941177, 1.0 };
+    pub const BarHeight: f32 = 32.0;
 
     background_shape: [4]f32,
     dirty: bool,
@@ -128,7 +132,7 @@ pub const MenubarElement = struct {
     }
 
     pub fn generate_quad_instances(self: MenubarElement) [1]QuadInstance {
-        return [_]QuadInstance{QuadInstance{
+        return .{.{
             .color = MenubarElement.BackgroundColor,
             .shape = self.background_shape,
         }};
@@ -921,14 +925,6 @@ fn SDL3GPUDestroySampler(device: *sdl.SDL_GPUDevice, sampler: *sdl.SDL_GPUSample
 
 /// Main entrypoint into the program
 pub fn run(settings: ProgramSettings) SDL3Error!void {
-    _ = font_module.FontAtlas(RobotoSansRegular16.config).CharacterGlyphs[@intCast('a')];
-
-    std.log.info("Font loaded: atlas {d}x{d}, {d} glyphs", .{
-        RobotoSansRegular16.config.atlas.width,
-        RobotoSansRegular16.config.atlas.height,
-        RobotoSansRegular16.config.glyphs.len,
-    });
-
     try SDL3Initialize();
     defer SDL3Quit();
 
@@ -950,11 +946,11 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     const window = try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
     defer SDL3DestroyWindow(window);
 
-    const glyph_w = RobotoSansRegular16.config.atlas.width;
-    const glyph_h = RobotoSansRegular16.config.atlas.height;
+    const glyph_w = InterRegular14.config.atlas.width;
+    const glyph_h = InterRegular14.config.atlas.height;
     const glyph_texture = try SDL3GPUCreateTextureGlyph(device, glyph_w, glyph_h);
     defer SDL3GPUDestroyTexture(device, glyph_texture);
-    try SDL3GPUTextureUpload(device, glyph_texture, glyph_w, glyph_h, RobotoSansRegular16.data);
+    try SDL3GPUTextureUpload(device, glyph_texture, glyph_w, glyph_h, InterRegular14.data);
 
     const glyph_sampler = try SDL3GPUCreateSamplerGlyph(device);
     defer SDL3GPUDestroySampler(device, glyph_sampler);
@@ -1004,7 +1000,6 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
     var glyph_scratch: [256]GlyphInstance = undefined;
     {
-        // const n = layoutText(RobotoSansRegular16, "hello world", 8, 18, 16, MenubarElement.TextColor, &glyph_scratch);
         glyph_count = GlyphInstance.text("hello world", .{ 8, 18 }, MenubarElement.TextColor, &glyph_scratch);
         try SDL3GPUBufferUpload(device, glyph_buffer, std.mem.sliceAsBytes(glyph_scratch[0..glyph_count]));
     }
@@ -1070,7 +1065,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
         const render_pass = try SDL3BeginGPURenderPass(command_buffer, &color_target_infos, null);
 
         const projection_ubo = ProjectionMatrixUniform.screen(swapchain_texture.w, swapchain_texture.h);
-        const glyph_ubo = GlyphUniform.init(font_module.FontAtlas(RobotoSansRegular16.config));
+        const glyph_ubo = GlyphUniform.init(font_module.FontAtlas(InterRegular14.config));
 
         // quads
         SDL3GPUBindPipeline(render_pass, quad_pipeline);
