@@ -7,6 +7,13 @@
             .num_storage_buffers = 1,
             .num_uniform_buffers = 1,
         },
+        .glyph = .{
+            .path = "modules/shader/glyph.vert",
+            .num_samplers = 0,
+            .num_storage_textures = 0,
+            .num_storage_buffers = 1,
+            .num_uniform_buffers = 1,
+        },
         .triangle = .{
             .path = "modules/shader/triangle.vert",
             .num_samplers = 0,
@@ -22,6 +29,13 @@
             .num_storage_textures = 0,
             .num_storage_buffers = 0,
             .num_uniform_buffers = 0,
+        },
+        .glyph = .{
+            .path = "modules/shader/glyph.frag",
+            .num_samplers = 1,
+            .num_storage_textures = 0,
+            .num_storage_buffers = 0,
+            .num_uniform_buffers = 1,
         },
         .triangle = .{
             .path = "modules/shader/triangle.frag",

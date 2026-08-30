@@ -5,82 +5,6 @@ const ShaderDescription = @import("modules/shader/root.zig").ShaderDescription;
 const FontDescription = @import("modules/font/root.zig").FontDescription;
 const FontConfiguration = @import("modules/font/root.zig").FontConfiguration;
 
-fn JsonToZonStep(comptime T: type) type {
-    return struct {
-        step: std.Build.Step,
-        input: std.Build.LazyPath,
-        generated_file: std.Build.GeneratedFile,
-
-        pub fn create(b: *std.Build, input: std.Build.LazyPath) *JsonToZonStep(T) {
-            const self = b.allocator.create(JsonToZonStep(T)) catch @panic("out of memory");
-
-            self.* = .{
-                .step = std.Build.Step.init(.{
-                    .id = .custom,
-                    .name = "JsonToZon",
-                    .owner = b,
-                    .makeFn = make,
-                }),
-                .input = input,
-                .generated_file = .{ .step = &self.step },
-            };
-
-            input.addStepDependencies(&self.step);
-            return self;
-        }
-
-        pub fn getOutput(self: *JsonToZonStep(T)) std.Build.LazyPath {
-            return .{ .generated = .{ .file = &self.generated_file } };
-        }
-
-        fn make(step: *std.Build.Step, opts: std.Build.Step.MakeOptions) anyerror!void {
-            _ = opts;
-            const self: *JsonToZonStep(T) = @fieldParentPtr("step", step);
-            const b = step.owner;
-            const io = b.graph.io;
-
-            // Read the JSON the previous step generated
-            const p = self.input.getPath4(b, step) catch unreachable;
-            const json_bytes = try p.root_dir.handle.readFileAlloc(io, p.sub_path, b.allocator, .unlimited);
-
-            // Parse JSON as T
-            const config = std.json.parseFromSlice(T, b.allocator, json_bytes, .{
-                .ignore_unknown_fields = true,
-                .allocate = .alloc_always,
-            }) catch |err| return step.fail("failed to parse json: {t}", .{err});
-            defer config.deinit();
-
-            // Serialize to ZON
-            var out: std.Io.Writer.Allocating = .init(b.allocator);
-            defer out.deinit();
-            std.zon.stringify.serialize(config.value, .{}, &out.writer) catch |err|
-                return step.fail("failed to serialize zon: {t}", .{err});
-            out.writer.flush() catch unreachable;
-            const zon_bytes = out.writer.buffered();
-
-            // Write to cache using content hash
-            var hash = b.graph.cache.hash;
-            hash.addBytes(zon_bytes);
-            const sub_path = "c" ++ std.fs.path.sep_str ++ hash.final() ++ std.fs.path.sep_str ++ "config.zon";
-            self.generated_file.path = try b.cache_root.join(b.allocator, &.{sub_path});
-
-            var af = b.cache_root.handle.createFileAtomic(io, sub_path, .{ .make_path = true }) catch |err| {
-                return step.fail("failed to write zon: {t}", .{err});
-            };
-            defer af.deinit(io);
-
-            af.file.writeStreamingAll(io, zon_bytes) catch |err| {
-                return step.fail("failed to write zon: {t}", .{err});
-            };
-
-            af.link(io) catch |err| switch (err) {
-                error.PathAlreadyExists => {},
-                else => return step.fail("failed to write zon: {t}", .{err}),
-            };
-        }
-    };
-}
-
 /// Helper wrapper around the shader module.
 ///
 /// Helps us ensure that each shader we compile (which uses the shader module) links to a common module.
@@ -170,6 +94,84 @@ const ShaderModule = struct {
     }
 };
 
+/// Helper class for converting a Json file to a Zon file we can use at comptime
+fn JsonToZonStep(comptime T: type) type {
+    return struct {
+        step: std.Build.Step,
+        input: std.Build.LazyPath,
+        generated_file: std.Build.GeneratedFile,
+
+        pub fn create(b: *std.Build, input: std.Build.LazyPath) *JsonToZonStep(T) {
+            const self = b.allocator.create(JsonToZonStep(T)) catch @panic("out of memory");
+
+            self.* = .{
+                .step = std.Build.Step.init(.{
+                    .id = .custom,
+                    .name = "JsonToZon",
+                    .owner = b,
+                    .makeFn = make,
+                }),
+                .input = input,
+                .generated_file = .{ .step = &self.step },
+            };
+
+            input.addStepDependencies(&self.step);
+            return self;
+        }
+
+        pub fn getOutput(self: *JsonToZonStep(T)) std.Build.LazyPath {
+            return .{ .generated = .{ .file = &self.generated_file } };
+        }
+
+        fn make(step: *std.Build.Step, opts: std.Build.Step.MakeOptions) anyerror!void {
+            _ = opts;
+
+            const self: *JsonToZonStep(T) = @fieldParentPtr("step", step);
+            const b = step.owner;
+            const io = b.graph.io;
+
+            // Read the JSON the previous step generated
+            const p = self.input.getPath4(b, step) catch unreachable;
+            const json_bytes = try p.root_dir.handle.readFileAlloc(io, p.sub_path, b.allocator, .unlimited);
+
+            // Parse JSON as T
+            const config = std.json.parseFromSlice(T, b.allocator, json_bytes, .{
+                .ignore_unknown_fields = true,
+                .allocate = .alloc_always,
+            }) catch |err| return step.fail("failed to parse json: {t}", .{err});
+            defer config.deinit();
+
+            // Serialize to ZON
+            var out: std.Io.Writer.Allocating = .init(b.allocator);
+            defer out.deinit();
+            std.zon.stringify.serialize(config.value, .{}, &out.writer) catch |err|
+                return step.fail("failed to serialize zon: {t}", .{err});
+            out.writer.flush() catch unreachable;
+            const zon_bytes = out.writer.buffered();
+
+            // Write to cache using content hash
+            var hash = b.graph.cache.hash;
+            hash.addBytes(zon_bytes);
+            const sub_path = "c" ++ std.fs.path.sep_str ++ hash.final() ++ std.fs.path.sep_str ++ "config.zon";
+            self.generated_file.path = try b.cache_root.join(b.allocator, &.{sub_path});
+
+            var af = b.cache_root.handle.createFileAtomic(io, sub_path, .{ .make_path = true }) catch |err| {
+                return step.fail("failed to write zon: {t}", .{err});
+            };
+            defer af.deinit(io);
+
+            af.file.writeStreamingAll(io, zon_bytes) catch |err| {
+                return step.fail("failed to write zon: {t}", .{err});
+            };
+
+            af.link(io) catch |err| switch (err) {
+                error.PathAlreadyExists => {},
+                else => return step.fail("failed to write zon: {t}", .{err}),
+            };
+        }
+    };
+}
+
 /// Helper wrapper around the font module.
 const FontModule = struct {
     const font_manifest = @import("modules/font/manifest.zon");
@@ -196,16 +198,16 @@ const FontModule = struct {
         command.addArg("-font");
         command.addArg(b.fmt("{s}", .{entry.path}));
         command.addArg("-type");
-        command.addArg(b.fmt("msdf", .{}));
+        command.addArg(b.fmt("sdf", .{}));
         command.addArg("-format");
-        command.addArg(b.fmt("rgba", .{}));
-        command.addArg("-size");
-        command.addArg(b.fmt("32", .{}));
+        command.addArg(b.fmt("bin", .{}));
         command.addArg("-pxrange");
         command.addArg(b.fmt("4", .{}));
+        command.addArg("-size");
+        command.addArg(b.fmt("{}", .{entry.pixels_per_em}));
 
         command.addArg("-imageout");
-        const data = command.addOutputFileArg(b.fmt("{s}.png", .{import_name}));
+        const data = command.addOutputFileArg(b.fmt("{s}.bin", .{import_name}));
 
         command.addArg("-json");
         const json = command.addOutputFileArg(b.fmt("{s}.json", .{import_name}));
@@ -242,6 +244,7 @@ const FontModule = struct {
             const entry = @field(font_manifest.fonts, field.name);
             self.appendFontModule(b, m, b.fmt("{s}", .{field.name}), FontDescription{
                 .path = entry.path,
+                .pixels_per_em = entry.pixels_per_em,
             });
         }
     }
@@ -259,6 +262,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
     core.addImport("shader", shader.module);
+    core.addImport("font", font.module);
 
     shader.appendManifest(b, core);
     font.appendManifest(b, core);

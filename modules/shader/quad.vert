@@ -1,12 +1,10 @@
 #version 450
 
-struct Quad {
-    vec4 shape;
-    vec4 color;
-};
+struct Quad { vec4 shape; vec4 color; };
 
 layout(std430, set = 0, binding = 0) readonly buffer Quads { Quad quads[]; };
 layout(std140, set = 1, binding = 0) uniform Camera { mat4 projectionMatrix; };
+
 layout(location = 0) out vec4 out_quad_color;
 
 void main() {

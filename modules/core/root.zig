@@ -1,12 +1,41 @@
 const std = @import("std");
 const sdl = @import("sdl3");
+const font_module = @import("font");
 const shader_module = @import("shader");
 
 const QuadVert = @import("quad_vert").shader;
 const QuadFrag = @import("quad_frag").shader;
+
+const GlyphVert = @import("glyph_vert").shader;
+const GlyphFrag = @import("glyph_frag").shader;
+
 const RobotoSansRegular16 = @import("roboto_mono_regular_16").font;
 
-/// Helper struct that manages the input and outputs for our quad shadser
+/// Helper struct for our projection matrix
+pub const ProjectionMatrixUniform = extern struct {
+    data: [16]f32,
+
+    pub fn ortho(x: f32, y: f32, w: f32, h: f32) ProjectionMatrixUniform {
+        var data: [16]f32 = std.mem.zeroes([16]f32);
+        data[0] = 2.0 / w;
+        data[5] = 2.0 / -h;
+
+        data[10] = 1.0;
+        data[12] = (2.0 * x + w) / -w;
+        data[13] = (2.0 * y + h) / h;
+        data[15] = 1.0;
+
+        return ProjectionMatrixUniform{
+            .data = data,
+        };
+    }
+
+    pub fn screen(w: u32, h: u32) ProjectionMatrixUniform {
+        return ortho(0, 0, @floatFromInt(w), @floatFromInt(h));
+    }
+};
+
+/// Helper struct that manages the quad for the GPU
 pub const QuadInstance = extern struct {
     const VertexCount = 4;
 
@@ -21,25 +50,57 @@ pub const QuadInstance = extern struct {
     }
 };
 
-/// Helper struct for our projection matrix
-pub const ProjectionMatrix = extern struct {
-    data: [16]f32,
+/// Helper struct for glyphs
+pub const GlyphUniform = extern struct {
+    aem_range: [2]f32,
+    threshold_em: f32,
+    antialias_per_em: f32,
 
-    pub fn ortho(x: f32, y: f32, w: f32, h: f32) ProjectionMatrix {
-        var data: [16]f32 = std.mem.zeroes([16]f32);
-        data[0] = 2.0 / w;
-        data[5] = -2.0 / h;
-        data[10] = 1.0;
-        data[12] = -(2.0 * x + w) / w;
-        data[13] = (2.0 * y + h) / h;
-        data[15] = 1.0;
-        return ProjectionMatrix{
-            .data = data,
+    pub fn init(comptime configuration: type) GlyphUniform {
+        return GlyphUniform{
+            .aem_range = configuration.aem_range,
+            .threshold_em = 0.0,
+            .antialias_per_em = configuration.pixels_per_em,
         };
     }
+};
 
-    pub fn screen(w: u32, h: u32) ProjectionMatrix {
-        return ortho(0, 0, @floatFromInt(w), @floatFromInt(h));
+/// Helper struct that manages the glyph for the GPU
+pub const GlyphInstance = extern struct {
+    const VertexCount = 4;
+
+    shape: [4]f32,
+    uv: [4]f32,
+    color: [4]f32,
+
+    pub fn init(char: u8, pos: *[2]f32, color: [4]f32) ?GlyphInstance {
+        const glyph = &font_module.FontAtlas(RobotoSansRegular16.config).CharacterGlyphs[char];
+
+        pos[0] += glyph.x_advance;
+
+        if (glyph.quad) |g| {
+            const loc: [4]f32 = .{ pos[0] + g.shape[0], pos[1] - g.shape[1], g.shape[2], g.shape[3] };
+
+            return GlyphInstance{
+                .shape = loc,
+                .uv = g.uv,
+                .color = color,
+            };
+        }
+
+        return null;
+    }
+
+    pub fn text(char: []const u8, pos: [2]f32, color: [4]f32, out: []GlyphInstance) usize {
+        var cursor = pos;
+        var index: usize = 0;
+
+        for (char) |c| {
+            out[index] = GlyphInstance.init(c, &cursor, color) orelse continue;
+            index += 1;
+        }
+
+        return index;
     }
 };
 
@@ -474,17 +535,28 @@ fn SDL3GPUCreateGraphicsPipeline(
     vert: *sdl.SDL_GPUShader,
     frag: *sdl.SDL_GPUShader,
     vertex_input_state: sdl.SDL_GPUVertexInputState,
+    blend: bool,
 ) SDL3Error!*sdl.SDL_GPUGraphicsPipeline {
     const str = "Creating SDL3 GPU graphics pipeline...";
     std.log.info("{s}...", .{str});
     errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
+    const blend_state = if (blend) sdl.SDL_GPUColorTargetBlendState{
+        .enable_blend = true,
+        .src_color_blendfactor = sdl.SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+        .dst_color_blendfactor = sdl.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        .color_blend_op = sdl.SDL_GPU_BLENDOP_ADD,
+        .src_alpha_blendfactor = sdl.SDL_GPU_BLENDFACTOR_ONE,
+        .dst_alpha_blendfactor = sdl.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        .alpha_blend_op = sdl.SDL_GPU_BLENDOP_ADD,
+        .color_write_mask = 0xF,
+        .enable_color_write_mask = false,
+    } else std.mem.zeroes(sdl.SDL_GPUColorTargetBlendState);
+
     const color_targets = [_]sdl.SDL_GPUColorTargetDescription{
         sdl.SDL_GPUColorTargetDescription{
             .format = sdl.SDL_GetGPUSwapchainTextureFormat(device, window),
-
-            // Remaining
-            .blend_state = std.mem.zeroes(sdl.SDL_GPUColorTargetBlendState),
+            .blend_state = blend_state,
         },
     };
 
@@ -558,6 +630,19 @@ fn SDL3GPUBindVertexBuffers(
     sdl.SDL_BindGPUVertexBuffers(render_pass, 0, &bindings, buffers.len);
 }
 
+fn SDL3GPUBindFragmentSampler(
+    render_pass: *sdl.SDL_GPURenderPass,
+    texture: *sdl.SDL_GPUTexture,
+    sampler: *sdl.SDL_GPUSampler,
+) void {
+    std.log.debug("Binding SDL3 GPU fragment sampler", .{});
+
+    sdl.SDL_BindGPUFragmentSamplers(render_pass, 0, &sdl.SDL_GPUTextureSamplerBinding{
+        .texture = texture,
+        .sampler = sampler,
+    }, 1);
+}
+
 /// Bind storage buffers to a render pass for the vertex stage, starting at slot 0
 fn SDL3GPUBindVertexStorageBuffers(
     render_pass: *sdl.SDL_GPURenderPass,
@@ -589,6 +674,22 @@ fn SDL3GPUPushVertexUniformData(
     );
 }
 
+/// Push raw bytes to a fragment uniform slot on an SDL3 GPU command buffer.
+fn SDL3GPUPushFragmentUniformData(
+    command_buffer: *sdl.SDL_GPUCommandBuffer,
+    slot: u32,
+    bytes: []const u8,
+) void {
+    std.log.debug("Pushing SDL3 GPU fragment uniform data", .{});
+
+    sdl.SDL_PushGPUFragmentUniformData(
+        command_buffer,
+        slot,
+        bytes.ptr,
+        @intCast(bytes.len),
+    );
+}
+
 /// Bind SDL3 index buffer to a render pass, I hardcode indices to be 16 bit
 fn SDL3GPUBindIndexBuffer(
     render_pass: *sdl.SDL_GPURenderPass,
@@ -608,12 +709,12 @@ fn SDL3GPUBindIndexBuffer(
 /// NOTE: We start at the beginning of the list in both cases.
 fn SDL3GPUDraw(
     render_pass: *sdl.SDL_GPURenderPass,
-    num_vertices: u32,
-    num_instances: u32,
+    num_vertices: usize,
+    num_instances: usize,
 ) void {
     std.log.debug("Drawing on SDL3 GPU", .{});
 
-    sdl.SDL_DrawGPUPrimitives(render_pass, num_vertices, num_instances, 0, 0);
+    sdl.SDL_DrawGPUPrimitives(render_pass, @intCast(num_vertices), @intCast(num_instances), 0, 0);
 }
 
 /// Create an SDL3 GPU buffer
@@ -694,8 +795,134 @@ fn SDL3GPUBufferUpload(
     std.log.info("{s} OK", .{str});
 }
 
+/// Create a texture to be used with glyphs
+fn SDL3GPUCreateTextureGlyph(device: *sdl.SDL_GPUDevice, w: u32, h: u32) SDL3Error!*sdl.SDL_GPUTexture {
+    const str = "Creating SDL3 GPU texture to be used with glyphs";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
+
+    const texture = sdl.SDL_CreateGPUTexture(device, &sdl.SDL_GPUTextureCreateInfo{
+        .type = sdl.SDL_GPU_TEXTURETYPE_2D,
+        .format = sdl.SDL_GPU_TEXTUREFORMAT_R8_UNORM,
+        .usage = sdl.SDL_GPU_TEXTUREUSAGE_SAMPLER,
+        .width = w,
+        .height = h,
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+        .sample_count = sdl.SDL_GPU_SAMPLECOUNT_1,
+        .props = 0,
+    }) orelse {
+        return SDL3Error.GPUInteraction;
+    };
+
+    std.log.info("{s} OK", .{str});
+    return texture;
+}
+
+/// Create a texture to be used with glyphs
+fn SDL3GPUDestroyTexture(device: *sdl.SDL_GPUDevice, texture: *sdl.SDL_GPUTexture) void {
+    std.log.info("Destroying SDL3 texture", .{});
+
+    sdl.SDL_ReleaseGPUTexture(device, texture);
+}
+
+fn SDL3GPUTextureUpload(
+    device: *sdl.SDL_GPUDevice,
+    target: *sdl.SDL_GPUTexture,
+    w: u32,
+    h: u32,
+    bytes: []const u8, // tightly packed RGBA8, len == w*h*4
+) SDL3Error!void {
+    const str = "Uploading to SDL3 GPU texture";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
+
+    const transfer = sdl.SDL_CreateGPUTransferBuffer(device, &sdl.SDL_GPUTransferBufferCreateInfo{
+        .usage = sdl.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+        .size = @intCast(bytes.len),
+        .props = 0,
+    }) orelse return SDL3Error.GPUInteraction;
+    defer sdl.SDL_ReleaseGPUTransferBuffer(device, transfer);
+
+    {
+        const mapped = sdl.SDL_MapGPUTransferBuffer(device, transfer, false) orelse
+            return SDL3Error.GPUInteraction;
+        defer sdl.SDL_UnmapGPUTransferBuffer(device, transfer);
+        @memcpy(@as([*]u8, @ptrCast(mapped))[0..bytes.len], bytes);
+    }
+    {
+        const cmd = try SDL3AcquireGPUCommandBuffer(device);
+        const copy_pass = sdl.SDL_BeginGPUCopyPass(cmd) orelse return SDL3Error.GPUInteraction;
+        sdl.SDL_UploadToGPUTexture(
+            copy_pass,
+            &sdl.SDL_GPUTextureTransferInfo{
+                .transfer_buffer = transfer,
+                .offset = 0,
+                .pixels_per_row = w,
+                .rows_per_layer = h,
+            },
+            &sdl.SDL_GPUTextureRegion{
+                .texture = target,
+                .mip_level = 0,
+                .layer = 0,
+                .x = 0,
+                .y = 0,
+                .z = 0,
+                .w = w,
+                .h = h,
+                .d = 1,
+            },
+            false,
+        );
+        sdl.SDL_EndGPUCopyPass(copy_pass);
+        try SDL3SubmitGPUCommandBuffer(cmd);
+    }
+
+    std.log.info("{s} OK", .{str});
+}
+
+/// Create an SDL3 GPU sampler for the glyph atlas.
+fn SDL3GPUCreateSamplerGlyph(device: *sdl.SDL_GPUDevice) SDL3Error!*sdl.SDL_GPUSampler {
+    const str = "Creating SDL3 GPU sampler for glyphs...";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
+
+    const sampler = sdl.SDL_CreateGPUSampler(device, &sdl.SDL_GPUSamplerCreateInfo{
+        .min_filter = sdl.SDL_GPU_FILTER_LINEAR,
+        .mag_filter = sdl.SDL_GPU_FILTER_LINEAR,
+        .mipmap_mode = sdl.SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
+        .address_mode_u = sdl.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+        .address_mode_v = sdl.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+        .address_mode_w = sdl.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+
+        // Remaining
+        .mip_lod_bias = 0,
+        .max_anisotropy = 0,
+        .compare_op = 0,
+        .min_lod = 0,
+        .max_lod = 0,
+        .enable_anisotropy = false,
+        .enable_compare = false,
+        .props = 0,
+    }) orelse {
+        return SDL3Error.GPUInteraction;
+    };
+
+    std.log.info("{s} OK", .{str});
+    return sampler;
+}
+
+/// Destroy an SDL3 GPU sampler
+fn SDL3GPUDestroySampler(device: *sdl.SDL_GPUDevice, sampler: *sdl.SDL_GPUSampler) void {
+    std.log.info("Destroying SDL3 sampler", .{});
+
+    sdl.SDL_ReleaseGPUSampler(device, sampler);
+}
+
 /// Main entrypoint into the program
 pub fn run(settings: ProgramSettings) SDL3Error!void {
+    _ = font_module.FontAtlas(RobotoSansRegular16.config).CharacterGlyphs[@intCast('a')];
+
     std.log.info("Font loaded: atlas {d}x{d}, {d} glyphs", .{
         RobotoSansRegular16.config.atlas.width,
         RobotoSansRegular16.config.atlas.height,
@@ -714,8 +941,23 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     const quad_frag = try SDL3GPUCreateShader(device, QuadFrag);
     defer SDL3GPUDestroyShader(device, quad_frag);
 
+    const glyph_vert = try SDL3GPUCreateShader(device, GlyphVert);
+    defer SDL3GPUDestroyShader(device, glyph_vert);
+
+    const glyph_frag = try SDL3GPUCreateShader(device, GlyphFrag);
+    defer SDL3GPUDestroyShader(device, glyph_frag);
+
     const window = try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
     defer SDL3DestroyWindow(window);
+
+    const glyph_w = RobotoSansRegular16.config.atlas.width;
+    const glyph_h = RobotoSansRegular16.config.atlas.height;
+    const glyph_texture = try SDL3GPUCreateTextureGlyph(device, glyph_w, glyph_h);
+    defer SDL3GPUDestroyTexture(device, glyph_texture);
+    try SDL3GPUTextureUpload(device, glyph_texture, glyph_w, glyph_h, RobotoSansRegular16.data);
+
+    const glyph_sampler = try SDL3GPUCreateSamplerGlyph(device);
+    defer SDL3GPUDestroySampler(device, glyph_sampler);
 
     try SDL3GPUClaimWindow(device, window);
     defer SDL3GPUDestroyWindow(device, window);
@@ -726,15 +968,46 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
         quad_vert,
         quad_frag,
         std.mem.zeroes(sdl.SDL_GPUVertexInputState),
+        false,
     );
     defer SDL3GPUDestroyGraphicsPipeline(device, quad_pipeline);
+
+    const glyph_pipeline = try SDL3GPUCreateGraphicsPipeline(
+        device,
+        window,
+        glyph_vert,
+        glyph_frag,
+        std.mem.zeroes(sdl.SDL_GPUVertexInputState),
+        true,
+    );
+    defer SDL3GPUDestroyGraphicsPipeline(device, glyph_pipeline);
 
     var menubar = MenubarElement.init(settings.window_w, settings.window_h);
 
     const QuadCapacity = 4096;
-    const quad_buffer = try SDL3GPUCreateBuffer(device, .GRAPHICS_STORAGE_READ, QuadCapacity * @sizeOf(QuadInstance));
+    const quad_buffer = try SDL3GPUCreateBuffer(
+        device,
+        .GRAPHICS_STORAGE_READ,
+        QuadCapacity * @sizeOf(QuadInstance),
+    );
     defer SDL3GPUDestroyBuffer(device, quad_buffer);
     var quad_count: u32 = 0;
+
+    const GlyphCapacity = 4096;
+    const glyph_buffer = try SDL3GPUCreateBuffer(
+        device,
+        .GRAPHICS_STORAGE_READ,
+        GlyphCapacity * @sizeOf(GlyphInstance),
+    );
+    defer SDL3GPUDestroyBuffer(device, glyph_buffer);
+    var glyph_count: usize = undefined;
+
+    var glyph_scratch: [256]GlyphInstance = undefined;
+    {
+        // const n = layoutText(RobotoSansRegular16, "hello world", 8, 18, 16, MenubarElement.TextColor, &glyph_scratch);
+        glyph_count = GlyphInstance.text("hello world", .{ 8, 18 }, MenubarElement.TextColor, &glyph_scratch);
+        try SDL3GPUBufferUpload(device, glyph_buffer, std.mem.sliceAsBytes(glyph_scratch[0..glyph_count]));
+    }
 
     var should_run = true;
     while (should_run) {
@@ -796,12 +1069,23 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
         const render_pass = try SDL3BeginGPURenderPass(command_buffer, &color_target_infos, null);
 
-        const projection = ProjectionMatrix.screen(swapchain_texture.w, swapchain_texture.h);
+        const projection_ubo = ProjectionMatrixUniform.screen(swapchain_texture.w, swapchain_texture.h);
+        const glyph_ubo = GlyphUniform.init(font_module.FontAtlas(RobotoSansRegular16.config));
 
+        // quads
         SDL3GPUBindPipeline(render_pass, quad_pipeline);
+        SDL3GPUPushVertexUniformData(command_buffer, 0, std.mem.asBytes(&projection_ubo));
         SDL3GPUBindVertexStorageBuffers(render_pass, .{quad_buffer});
-        SDL3GPUPushVertexUniformData(command_buffer, 0, std.mem.asBytes(&projection));
         SDL3GPUDraw(render_pass, QuadInstance.VertexCount, quad_count);
+
+        // glyphs
+        SDL3GPUBindPipeline(render_pass, glyph_pipeline);
+        SDL3GPUPushVertexUniformData(command_buffer, 0, std.mem.asBytes(&projection_ubo));
+        SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&glyph_ubo));
+        SDL3GPUBindVertexStorageBuffers(render_pass, .{glyph_buffer});
+        SDL3GPUBindFragmentSampler(render_pass, glyph_texture, glyph_sampler);
+        SDL3GPUDraw(render_pass, GlyphInstance.VertexCount, glyph_count);
+
         SDL3EndGPURenderPass(render_pass);
 
         try SDL3SubmitGPUCommandBuffer(command_buffer);

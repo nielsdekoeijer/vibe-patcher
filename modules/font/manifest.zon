@@ -2,6 +2,7 @@
     .fonts = .{
         .roboto_mono_regular_16 = .{
             .path = "modules/font/RobotoMono-Regular.ttf",
+            .pixels_per_em = 16,
         },
     },
 }
