@@ -95,12 +95,11 @@ pub const GlyphInstance = extern struct {
         return null;
     }
 
-    pub fn text(char: []const u8, pos: [2]f32, color: [4]f32, out: []GlyphInstance) usize {
-        var cursor = pos;
+    pub fn text(char: []const u8, cursor: *[2]f32, color: [4]f32, out: []GlyphInstance) usize {
         var index: usize = 0;
 
         for (char) |c| {
-            out[index] = GlyphInstance.init(c, &cursor, color) orelse continue;
+            out[index] = GlyphInstance.init(c, cursor, color) orelse continue;
             index += 1;
         }
 
@@ -115,27 +114,93 @@ pub const UserInterface = struct {
 
 /// Describes the menubar
 pub const MenubarElement = struct {
-    pub const BackgroundColor: [4]f32 = .{ 0.13333334, 0.13725491, 0.15686275, 1.0 };
-    pub const TextColor: [4]f32 = .{ 0.9098039, 0.9137255, 0.92941177, 1.0 };
-    pub const BarHeight: f32 = 32.0;
+    pub const TextColor: [4]f32 = .{ 0.13333334, 0.13725491, 0.15686275, 1.0 };
+    pub const BackgroundColor: [4]f32 = .{ 0.9804, 0.9804, 0.9804, 1.0 };
+    pub const BarHeight: f32 = 24.0;
 
     background_shape: [4]f32,
     dirty: bool,
 
-    pub fn init(w: u32, h: u32) MenubarElement {
+    pub fn init(x: f32, y: f32, w: u32, h: u32) MenubarElement {
         _ = h;
 
         return MenubarElement{
-            .background_shape = .{ 0, 0, @floatFromInt(w), BarHeight },
+            .background_shape = .{ x, y, @floatFromInt(w), BarHeight },
             .dirty = true,
         };
     }
 
-    pub fn generate_quad_instances(self: MenubarElement) [1]QuadInstance {
-        return .{.{
+    pub fn generate_quad_instances(self: MenubarElement, quads: []QuadInstance) usize {
+        quads[0] = .{
             .color = MenubarElement.BackgroundColor,
             .shape = self.background_shape,
-        }};
+        };
+
+        return 1;
+    }
+};
+
+pub const ToolbarElement = struct {
+    pub const TextColor: [4]f32 = .{ 0.9804, 0.9804, 0.9804, 1.0 };
+    pub const BackgroundColor: [4]f32 = .{ 0.13333334, 0.13725491, 0.15686275, 1.0 };
+    pub const BarHeight: f32 = 24.0;
+
+    background_shape: [4]f32,
+    dirty: bool,
+
+    pub fn init(x: f32, y: f32, w: u32, h: u32) ToolbarElement {
+        _ = h;
+
+        return ToolbarElement{
+            .background_shape = .{
+                x,
+                y,
+                @as(f32, @floatFromInt(w)),
+                BarHeight,
+            },
+            .dirty = true,
+        };
+    }
+
+    pub fn generate_quad_instances(self: ToolbarElement, quads: []QuadInstance) usize {
+        quads[0] = .{
+            .color = ToolbarElement.BackgroundColor,
+            .shape = self.background_shape,
+        };
+
+        return 1;
+    }
+};
+
+pub const StatusElement = struct {
+    pub const TextColor: [4]f32 = .{ 0.9804, 0.9804, 0.9804, 1.0 };
+    pub const BackgroundColor: [4]f32 = .{ 0.13333334, 0.13725491, 0.15686275, 1.0 };
+    pub const BarHeight: f32 = 24.0;
+
+    background_shape: [4]f32,
+    dirty: bool,
+
+    pub fn init(x: f32, y: f32, w: u32, h: u32) StatusElement {
+        _ = h;
+
+        return StatusElement{
+            .background_shape = .{
+                x,
+                y,
+                @as(f32, @floatFromInt(w)),
+                BarHeight,
+            },
+            .dirty = true,
+        };
+    }
+
+    pub fn generate_quad_instances(self: StatusElement, quads: []QuadInstance) usize {
+        quads[0] = .{
+            .color = StatusElement.BackgroundColor,
+            .shape = self.background_shape,
+        };
+
+        return 1;
     }
 };
 
@@ -978,7 +1043,26 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     );
     defer SDL3GPUDestroyGraphicsPipeline(device, glyph_pipeline);
 
-    var menubar = MenubarElement.init(settings.window_w, settings.window_h);
+    var menubar = MenubarElement.init(
+        0,
+        0,
+        settings.window_w,
+        settings.window_h,
+    );
+
+    var toolbar = ToolbarElement.init(
+        0,
+        MenubarElement.BarHeight,
+        settings.window_w,
+        settings.window_h,
+    );
+
+    var status = StatusElement.init(
+        0,
+        @as(f32, @floatFromInt(settings.window_h)) - StatusElement.BarHeight,
+        settings.window_w,
+        settings.window_h,
+    );
 
     const QuadCapacity = 4096;
     const quad_buffer = try SDL3GPUCreateBuffer(
@@ -987,7 +1071,6 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
         QuadCapacity * @sizeOf(QuadInstance),
     );
     defer SDL3GPUDestroyBuffer(device, quad_buffer);
-    var quad_count: u32 = 0;
 
     const GlyphCapacity = 4096;
     const glyph_buffer = try SDL3GPUCreateBuffer(
@@ -996,22 +1079,50 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
         GlyphCapacity * @sizeOf(GlyphInstance),
     );
     defer SDL3GPUDestroyBuffer(device, glyph_buffer);
-    var glyph_count: usize = undefined;
 
+    var quad_count: usize = 0;
+    var quad_scratch: [256]QuadInstance = undefined;
+
+    var glyph_count: usize = 0;
+    var glyph_cursor: [2]f32 = .{ 15, 17 };
     var glyph_scratch: [256]GlyphInstance = undefined;
     {
-        glyph_count = GlyphInstance.text("hello world", .{ 8, 18 }, MenubarElement.TextColor, &glyph_scratch);
+        glyph_count += GlyphInstance.text(
+            "File",
+            &glyph_cursor,
+            MenubarElement.TextColor,
+            glyph_scratch[glyph_count..],
+        );
+        glyph_cursor[0] += 20;
+
+        glyph_count += GlyphInstance.text(
+            "Edit",
+            &glyph_cursor,
+            MenubarElement.TextColor,
+            glyph_scratch[glyph_count..],
+        );
+        glyph_cursor[0] += 20;
+
+        glyph_count += GlyphInstance.text(
+            "View",
+            &glyph_cursor,
+            MenubarElement.TextColor,
+            glyph_scratch[glyph_count..],
+        );
+        glyph_cursor[0] += 20;
+
+        glyph_count += GlyphInstance.text(
+            "Object",
+            &glyph_cursor,
+            MenubarElement.TextColor,
+            glyph_scratch[glyph_count..],
+        );
+
         try SDL3GPUBufferUpload(device, glyph_buffer, std.mem.sliceAsBytes(glyph_scratch[0..glyph_count]));
     }
 
     var should_run = true;
     while (should_run) {
-        const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
-        const swapchain_texture = try SDL3AcquireGPUSwapchainTextureBlocking(command_buffer, window) orelse {
-            try SDL3SubmitGPUCommandBuffer(command_buffer);
-            continue;
-        };
-
         while (SDL3PollEvent()) |event| {
             switch (event.type) {
                 sdl.SDL_EVENT_QUIT => {
@@ -1021,7 +1132,19 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                     std.log.info("Click at ({d}, {d})", .{ event.button.x, event.button.y });
                 },
                 sdl.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED => {
-                    menubar = MenubarElement.init(swapchain_texture.w, swapchain_texture.h);
+                    if (event.window.data1 > 0 and event.window.data2 > 0) {
+                        const pixel_w: u32 = @intCast(event.window.data1);
+                        const pixel_h: u32 = @intCast(event.window.data2);
+
+                        menubar = MenubarElement.init(0, 0, pixel_w, pixel_h);
+                        toolbar = ToolbarElement.init(0, MenubarElement.BarHeight, pixel_w, pixel_h);
+                        status = StatusElement.init(
+                            0,
+                            @as(f32, @floatFromInt(pixel_h)) - StatusElement.BarHeight,
+                            pixel_w,
+                            pixel_h,
+                        );
+                    }
                 },
                 sdl.SDL_EVENT_KEY_DOWN => {
                     switch (event.key.key) {
@@ -1037,10 +1160,21 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             continue;
         }
 
+        if (!should_run) break;
+
+        const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
+        const swapchain_texture = try SDL3AcquireGPUSwapchainTextureBlocking(command_buffer, window) orelse {
+            try SDL3SubmitGPUCommandBuffer(command_buffer);
+            continue;
+        };
+
         if (menubar.dirty) {
-            const quads = menubar.generate_quad_instances();
-            quad_count = quads.len;
-            try SDL3GPUBufferUpload(device, quad_buffer, std.mem.sliceAsBytes(quads[0..]));
+            quad_count = 0;
+            quad_count += menubar.generate_quad_instances(quad_scratch[quad_count..]);
+            quad_count += toolbar.generate_quad_instances(quad_scratch[quad_count..]);
+            quad_count += status.generate_quad_instances(quad_scratch[quad_count..]);
+
+            try SDL3GPUBufferUpload(device, quad_buffer, std.mem.sliceAsBytes(quad_scratch[0..quad_count]));
             menubar.dirty = false;
         }
 
