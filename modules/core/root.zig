@@ -9,7 +9,7 @@ const QuadFrag = @import("quad_frag").shader;
 const GlyphVert = @import("glyph_vert").shader;
 const GlyphFrag = @import("glyph_frag").shader;
 
-const InterRegular14 = @import("inter_regular_14").font;
+const InterRegular14 = @import("atikinsons_hyperlegible_regular_14").font;
 
 /// Helper struct for our projection matrix
 pub const ProjectionMatrixUniform = extern struct {

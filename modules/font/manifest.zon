@@ -8,5 +8,9 @@
             .path = "modules/font/Inter-Regular.ttf",
             .pixels_per_em = 14,
         },
+        .atikinsons_hyperlegible_regular_14 = .{
+            .path = "modules/font/AtkinsonHyperlegible-Regular.ttf",
+            .pixels_per_em = 14,
+        },
     },
 }
