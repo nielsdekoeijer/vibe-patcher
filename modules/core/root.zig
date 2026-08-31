@@ -136,14 +136,96 @@ pub const GlyphInstance = extern struct {
 /// Describes the UI component
 pub const UserInterface = struct {
     menubar: MenubarElement,
+
+    toolbar: ToolbarElement,
+
+    selector: SelectorElement,
+
+    inspector: InspectorElement,
+
+    console: ConsoleElement,
+
+    status: StatusElement,
+
+    dirty: bool,
+
+    pub fn resize(self: *UserInterface, w: f32, h: f32) void {
+        self.menubar = MenubarElement.init(0, 0, w, h);
+
+        const toolbar_y = MenubarElement.BarHeight;
+
+        self.toolbar = ToolbarElement.init(0, toolbar_y, w, h);
+
+        const selector_y = toolbar_y + ToolbarElement.BarHeight;
+        const selector_h = h - MenubarElement.BarHeight - ToolbarElement.BarHeight - StatusElement.BarHeight;
+
+        self.selector = SelectorElement.init(0, selector_y, w, selector_h);
+
+        const inspector_x = w - InspectorElement.BarWidth;
+        const inspector_y = selector_y;
+        const inspector_h = selector_h;
+
+        self.inspector = InspectorElement.init(inspector_x, inspector_y, w, inspector_h);
+
+        const status_y = h - StatusElement.BarHeight;
+
+        self.status = StatusElement.init(0, status_y, w, h);
+
+        const console_x = SelectorElement.BarWidth;
+        const console_y = h - ConsoleElement.BarHeight - StatusElement.BarHeight;
+        const console_w = w - InspectorElement.BarWidth - SelectorElement.BarWidth;
+        const console_h = h;
+
+        self.console = ConsoleElement.init(console_x, console_y, console_w, console_h);
+
+        self.dirty = true;
+    }
+
+    pub fn generate_quad_instances(self: UserInterface, out: []QuadInstance) usize {
+        var index: usize = 0;
+
+        index += self.status.generate_quad_instances(
+            out[index..],
+        );
+
+        index += self.menubar.generate_quad_instances(out[index..]);
+
+        index += self.toolbar.generate_quad_instances(out[index..]);
+
+        index += self.console.generate_quad_instances(out[index..]);
+
+        index += self.selector.generate_quad_instances(out[index..]);
+
+        index += self.inspector.generate_quad_instances(out[index..]);
+
+        return index;
+    }
+
+    pub fn generate_glyph_instances(self: UserInterface, out: []GlyphInstance) usize {
+        var index: usize = 0;
+
+        index += self.menubar.generate_glyph_instances(out[index..]);
+
+        return index;
+    }
+
+    pub fn init(w: f32, h: f32) UserInterface {
+        var interface: UserInterface = undefined;
+
+        interface.resize(w, h);
+
+        return interface;
+    }
 };
 
 /// Describes the menubar
 pub const MenubarElement = struct {
-    pub const TextColor = hexColor("#222328");
+    pub const TextColor = hexColor("#171E29");
     pub const TextCursor: [2]f32 = .{ 15, 17 };
-    pub const BackgroundColor = hexColor("#FAFAFA");
+    pub const BackgroundColor = hexColor("#F1F5FA");
+    pub const HoverColor = hexColor("#DCE6F5");
     pub const BarHeight: f32 = 24.0;
+    pub const OptionPadding: f32 = 10.0;
 
     const Option = struct {
         name: []const u8,
@@ -164,15 +246,38 @@ pub const MenubarElement = struct {
     pub const Options = [_]Option{ .init("File"), .init("Edit"), .init("View"), .init("Object") };
 
     background_shape: [4]f32,
-    dirty: bool,
+    hovered_option_index: ?usize,
 
-    pub fn init(x: f32, y: f32, w: u32, h: u32) MenubarElement {
+    pub fn init(x: f32, y: f32, w: f32, h: f32) MenubarElement {
         _ = h;
 
         return MenubarElement{
-            .background_shape = .{ x, y, @floatFromInt(w), BarHeight },
-            .dirty = true,
+            .background_shape = .{ x, y, w, BarHeight },
+            .hovered_option_index = null,
         };
+    }
+
+    pub fn update_hover(self: *MenubarElement, x: f32, y: f32) bool {
+        const previous = self.hovered_option_index;
+        self.hovered_option_index = null;
+
+        if (y >= self.background_shape[1] and y < self.background_shape[1] + self.background_shape[3]) {
+            var cursor_x = TextCursor[0];
+
+            for (Options, 0..) |option, index| {
+                const l = cursor_x - OptionPadding;
+                const r = cursor_x + option.bounding_box[0] + OptionPadding;
+
+                if (x >= l and x < r) {
+                    self.hovered_option_index = index;
+                    break;
+                }
+
+                cursor_x = r + OptionPadding;
+            }
+        }
+
+        return previous != self.hovered_option_index;
     }
 
     pub fn generate_glyph_instances(self: MenubarElement, out: []GlyphInstance) usize {
@@ -183,7 +288,7 @@ pub const MenubarElement = struct {
 
         for (MenubarElement.Options) |option| {
             index += option.append_glypths(&cursor, out[index..]);
-            cursor[0] += 20;
+            cursor[0] += OptionPadding * 2;
         }
 
         return index;
@@ -195,29 +300,37 @@ pub const MenubarElement = struct {
             .shape = self.background_shape,
         };
 
-        return 1;
+        const hovered = self.hovered_option_index orelse return 1;
+        var cursor_x = TextCursor[0];
+
+        for (Options[0..hovered]) |option| {
+            cursor_x += option.bounding_box[0] + OptionPadding * 2;
+        }
+
+        out[1] = QuadInstance.init(
+            cursor_x - OptionPadding,
+            self.background_shape[1],
+            Options[hovered].bounding_box[0] + OptionPadding * 2,
+            self.background_shape[3],
+            HoverColor,
+        );
+
+        return 2;
     }
 };
 
 pub const ToolbarElement = struct {
-    pub const TextColor = hexColor("#FAFAFA");
-    pub const BackgroundColor = hexColor("#222328");
+    pub const TextColor = hexColor("#F1F5FA");
+    pub const BackgroundColor = hexColor("#202A38");
     pub const BarHeight: f32 = 24.0;
 
     background_shape: [4]f32,
-    dirty: bool,
 
-    pub fn init(x: f32, y: f32, w: u32, h: u32) ToolbarElement {
+    pub fn init(x: f32, y: f32, w: f32, h: f32) ToolbarElement {
         _ = h;
 
         return ToolbarElement{
-            .background_shape = .{
-                x,
-                y,
-                @as(f32, @floatFromInt(w)),
-                BarHeight,
-            },
-            .dirty = true,
+            .background_shape = .{ x, y, w, BarHeight },
         };
     }
 
@@ -232,24 +345,17 @@ pub const ToolbarElement = struct {
 };
 
 pub const SelectorElement = struct {
-    pub const TextColor = hexColor("#FAFAFA");
-    pub const BackgroundColor = hexColor("#222328");
+    pub const TextColor = hexColor("#F1F5FA");
+    pub const BackgroundColor = hexColor("#151B24");
     pub const BarWidth: f32 = 48.0;
 
     background_shape: [4]f32,
-    dirty: bool,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) SelectorElement {
         _ = w;
 
         return SelectorElement{
-            .background_shape = .{
-                x,
-                y,
-                BarWidth,
-                h,
-            },
-            .dirty = true,
+            .background_shape = .{ x, y, BarWidth, h },
         };
     }
 
@@ -264,24 +370,17 @@ pub const SelectorElement = struct {
 };
 
 pub const InspectorElement = struct {
-    pub const TextColor = hexColor("#FAFAFA");
-    pub const BackgroundColor = hexColor("#222328");
+    pub const TextColor = hexColor("#F1F5FA");
+    pub const BackgroundColor = hexColor("#151B24");
     pub const BarWidth: f32 = 48.0;
 
     background_shape: [4]f32,
-    dirty: bool,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) InspectorElement {
         _ = w;
 
         return InspectorElement{
-            .background_shape = .{
-                x,
-                y,
-                BarWidth,
-                h,
-            },
-            .dirty = true,
+            .background_shape = .{ x, y, BarWidth, h },
         };
     }
 
@@ -296,24 +395,17 @@ pub const InspectorElement = struct {
 };
 
 pub const StatusElement = struct {
-    pub const TextColor = hexColor("#FAFAFA");
-    pub const BackgroundColor = hexColor("#222328");
+    pub const TextColor = hexColor("#9EACBE");
+    pub const BackgroundColor = hexColor("#202A38");
     pub const BarHeight: f32 = 24.0;
 
     background_shape: [4]f32,
-    dirty: bool,
 
-    pub fn init(x: f32, y: f32, w: u32, h: u32) StatusElement {
+    pub fn init(x: f32, y: f32, w: f32, h: f32) StatusElement {
         _ = h;
 
         return StatusElement{
-            .background_shape = .{
-                x,
-                y,
-                @as(f32, @floatFromInt(w)),
-                BarHeight,
-            },
-            .dirty = true,
+            .background_shape = .{ x, y, w, BarHeight },
         };
     }
 
@@ -328,30 +420,23 @@ pub const StatusElement = struct {
 };
 
 pub const ConsoleElement = struct {
-    pub const TextColor = hexColor("#222328");
-    pub const BackgroundColor = hexColor("#FAFAFA");
+    pub const TextColor = hexColor("#F1F5FA");
+    pub const BackgroundColor = hexColor("#171E29");
     pub const BarHeight: f32 = 120.0;
 
     background_shape: [4]f32,
-    dirty: bool,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) ConsoleElement {
         _ = h;
 
         return ConsoleElement{
-            .background_shape = .{
-                x,
-                y,
-                w,
-                BarHeight,
-            },
-            .dirty = true,
+            .background_shape = .{ x, y, w, BarHeight },
         };
     }
 
     pub fn generate_quad_instances(self: ConsoleElement, quads: []QuadInstance) usize {
         quads[0] = .{
-            .color = ConsoleElement.BackgroundColor,
+            .color = BackgroundColor,
             .shape = self.background_shape,
         };
 
@@ -524,7 +609,7 @@ const SwapchainTexture = struct {
 const WindowName: [*:0]const u8 = "vibe-patcher";
 
 /// Our default clear color
-const ClearColor: sdl.SDL_FColor = @bitCast(hexColor("#17171C"));
+const ClearColor: sdl.SDL_FColor = @bitCast(hexColor("#D9DEE5"));
 
 /// Initialize the SDL3 library with the specified subsystems
 fn SDL3Initialize() SDL3Error!void {
@@ -626,6 +711,22 @@ fn SDL3SubmitGPUCommandBuffer(command_buffer: *sdl.SDL_GPUCommandBuffer) SDL3Err
     }
 
     std.log.debug("{s} OK", .{str});
+}
+
+fn SDL3GPUColorTargetInfos(texture: *sdl.SDL_GPUTexture) [1]sdl.SDL_GPUColorTargetInfo {
+    return .{.{
+        .texture = texture,
+        .load_op = sdl.SDL_GPU_LOADOP_CLEAR,
+        .store_op = sdl.SDL_GPU_STOREOP_STORE,
+        .clear_color = ClearColor,
+        .mip_level = 0,
+        .resolve_mip_level = 0,
+        .cycle = false,
+        .resolve_layer = 0,
+        .resolve_texture = null,
+        .cycle_resolve_texture = false,
+        .layer_or_depth_plane = 0,
+    }};
 }
 
 /// Begin a SDL3 GPU render pass
@@ -1198,47 +1299,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     );
     defer SDL3GPUDestroyGraphicsPipeline(device, glyph_pipeline);
 
-    var menubar = MenubarElement.init(
-        0,
-        0,
-        settings.window_w,
-        settings.window_h,
-    );
-
-    var toolbar = ToolbarElement.init(
-        0,
-        MenubarElement.BarHeight,
-        settings.window_w,
-        settings.window_h,
-    );
-
-    var selector = SelectorElement.init(
-        0,
-        MenubarElement.BarHeight + ToolbarElement.BarHeight,
-        @floatFromInt(settings.window_w),
-        @as(f32, @floatFromInt(settings.window_h)) - MenubarElement.BarHeight - ToolbarElement.BarHeight - StatusElement.BarHeight,
-    );
-
-    var inspector = InspectorElement.init(
-        @as(f32, @floatFromInt(settings.window_w)) - InspectorElement.BarWidth,
-        MenubarElement.BarHeight + ToolbarElement.BarHeight,
-        @floatFromInt(settings.window_w),
-        @as(f32, @floatFromInt(settings.window_h)) - MenubarElement.BarHeight - ToolbarElement.BarHeight - StatusElement.BarHeight,
-    );
-
-    var status = StatusElement.init(
-        0,
-        @as(f32, @floatFromInt(settings.window_h)) - StatusElement.BarHeight,
-        settings.window_w,
-        settings.window_h,
-    );
-
-    var console = ConsoleElement.init(
-        SelectorElement.BarWidth,
-        @as(f32, @floatFromInt(settings.window_h)) - ConsoleElement.BarHeight - StatusElement.BarHeight,
-        @as(f32, @floatFromInt(settings.window_w)) - InspectorElement.BarWidth - SelectorElement.BarWidth,
-        @floatFromInt(settings.window_h),
-    );
+    var interface = UserInterface.init(@floatFromInt(settings.window_w), @floatFromInt(settings.window_h));
 
     const QuadCapacity = 4096;
     const quad_buffer = try SDL3GPUCreateBuffer(
@@ -1261,7 +1322,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
     var glyph_count: usize = 0;
     var glyph_scratch: [256]GlyphInstance = undefined;
-    glyph_count += menubar.generate_glyph_instances(&glyph_scratch);
+    glyph_count += interface.generate_glyph_instances(&glyph_scratch);
     try SDL3GPUBufferUpload(device, glyph_buffer, std.mem.sliceAsBytes(glyph_scratch[0..glyph_count]));
 
     var should_run = true;
@@ -1271,57 +1332,25 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                 sdl.SDL_EVENT_QUIT => {
                     should_run = false;
                 },
+
                 sdl.SDL_EVENT_MOUSE_BUTTON_DOWN => {
                     std.log.info("Click at ({d}, {d})", .{ event.button.x, event.button.y });
                 },
+
+                sdl.SDL_EVENT_MOUSE_MOTION => {
+                    if (interface.menubar.update_hover(event.motion.x, event.motion.y)) {
+                        interface.dirty = true;
+                    }
+                },
+
                 sdl.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED => {
                     if (event.window.data1 > 0 and event.window.data2 > 0) {
                         const pixel_w: u32 = @intCast(event.window.data1);
                         const pixel_h: u32 = @intCast(event.window.data2);
-
-                        menubar = MenubarElement.init(
-                            0,
-                            0,
-                            pixel_w,
-                            pixel_h,
-                        );
-
-                        toolbar = ToolbarElement.init(
-                            0,
-                            MenubarElement.BarHeight,
-                            pixel_w,
-                            pixel_h,
-                        );
-
-                        selector = SelectorElement.init(
-                            0,
-                            MenubarElement.BarHeight + ToolbarElement.BarHeight,
-                            @floatFromInt(pixel_w),
-                            @as(f32, @floatFromInt(pixel_h)) - MenubarElement.BarHeight - ToolbarElement.BarHeight - StatusElement.BarHeight,
-                        );
-
-                        inspector = InspectorElement.init(
-                            @as(f32, @floatFromInt(pixel_w)) - InspectorElement.BarWidth,
-                            MenubarElement.BarHeight + ToolbarElement.BarHeight,
-                            @floatFromInt(pixel_w),
-                            @as(f32, @floatFromInt(pixel_h)) - MenubarElement.BarHeight - ToolbarElement.BarHeight - StatusElement.BarHeight,
-                        );
-
-                        status = StatusElement.init(
-                            0,
-                            @as(f32, @floatFromInt(pixel_h)) - StatusElement.BarHeight,
-                            pixel_w,
-                            pixel_h,
-                        );
-
-                        console = ConsoleElement.init(
-                            SelectorElement.BarWidth,
-                            @as(f32, @floatFromInt(pixel_h)) - ConsoleElement.BarHeight - StatusElement.BarHeight,
-                            @as(f32, @floatFromInt(pixel_w)) - InspectorElement.BarWidth - SelectorElement.BarWidth,
-                            @floatFromInt(pixel_h),
-                        );
+                        interface.resize(@floatFromInt(pixel_w), @floatFromInt(pixel_h));
                     }
                 },
+
                 sdl.SDL_EVENT_KEY_DOWN => {
                     switch (event.key.key) {
                         sdl.SDLK_Q => {
@@ -1330,6 +1359,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                         else => {},
                     }
                 },
+
                 else => {},
             }
 
@@ -1344,37 +1374,17 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             continue;
         };
 
-        if (menubar.dirty) {
+        if (interface.dirty) {
             quad_count = 0;
-            quad_count += status.generate_quad_instances(quad_scratch[quad_count..]);
-            quad_count += menubar.generate_quad_instances(quad_scratch[quad_count..]);
-            quad_count += toolbar.generate_quad_instances(quad_scratch[quad_count..]);
-            quad_count += console.generate_quad_instances(quad_scratch[quad_count..]);
-            quad_count += selector.generate_quad_instances(quad_scratch[quad_count..]);
-            quad_count += inspector.generate_quad_instances(quad_scratch[quad_count..]);
+
+            quad_count += interface.generate_quad_instances(quad_scratch[quad_count..]);
 
             try SDL3GPUBufferUpload(device, quad_buffer, std.mem.sliceAsBytes(quad_scratch[0..quad_count]));
-            menubar.dirty = false;
+
+            interface.dirty = false;
         }
 
-        const color_target_infos = [_]sdl.SDL_GPUColorTargetInfo{
-            sdl.SDL_GPUColorTargetInfo{
-                .texture = swapchain_texture.tex,
-                .load_op = sdl.SDL_GPU_LOADOP_CLEAR,
-                .store_op = sdl.SDL_GPU_STOREOP_STORE,
-                .clear_color = ClearColor,
-
-                // Remaining
-                .mip_level = 0,
-                .resolve_mip_level = 0,
-                .cycle = false,
-                .resolve_layer = 0,
-                .resolve_texture = null,
-                .cycle_resolve_texture = false,
-                .layer_or_depth_plane = 0,
-            },
-        };
-
+        const color_target_infos = SDL3GPUColorTargetInfos(swapchain_texture.tex);
         const render_pass = try SDL3BeginGPURenderPass(command_buffer, &color_target_infos, null);
 
         const projection_ubo = ProjectionMatrixUniform.screen(swapchain_texture.w, swapchain_texture.h);
