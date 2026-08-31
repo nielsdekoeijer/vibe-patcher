@@ -432,23 +432,28 @@ pub const CanvasElement = struct {
     pub const GridLineWidth: f32 = 1.0;
 
     bounding_box: [4]f32,
+
     dragging: bool,
+
     camera: Camera2D,
+
+    hovered: bool,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) CanvasElement {
         return CanvasElement{
             .bounding_box = .{ x, y, w, h },
             .dragging = false,
             .camera = .init(),
+            .hovered = false,
         };
     }
 
     pub fn contains(self: CanvasElement, x: f32, y: f32) bool {
-        if (y < self.bounding_box[1] and y >= self.bounding_box[1] + self.bounding_box[3]) {
+        if (y < self.bounding_box[1] or y >= self.bounding_box[1] + self.bounding_box[3]) {
             return false;
         }
 
-        if (x < self.bounding_box[0] and x >= self.bounding_box[0] + self.bounding_box[2]) {
+        if (x < self.bounding_box[0] or x >= self.bounding_box[0] + self.bounding_box[2]) {
             return false;
         }
 
@@ -573,6 +578,31 @@ pub const StatusElement = struct {
 };
 
 pub const ConsoleElement = struct {
+    pub const TextBuffer = struct {
+        /// Total number of lines, should be power of 2 for cheaper wrap
+        const LineCount = 512;
+
+        /// Max characters per line
+        const CharCount = 512;
+
+        /// Backing text buffer
+        buffer: [LineCount][CharCount]u8,
+
+        /// Length of each given line
+        length_per_line: [LineCount]u16,
+
+        /// Position of current buffer cursor
+        head: usize,
+
+        pub fn init() TextBuffer {
+            return .{
+                .buffer = @splat(0),
+                .length_per_line = @splat(0),
+                .head = 0,
+            };
+        }
+    };
+
     pub const TextColor = hexColor("#F1F5FA", 1.0);
     pub const InputTextColor = hexColor("#171E29", 1.0);
     pub const BackgroundColor = hexColor("#171E29", 1.0);
@@ -581,7 +611,8 @@ pub const ConsoleElement = struct {
     pub const SeparatorColor = hexColor("#293241", 1.0);
     pub const ScrollTrackColor = hexColor("#202A38", 1.0);
     pub const ScrollThumbColor = hexColor("#5B687A", 1.0);
-    pub const BarHeight: f32 = 168.0;
+
+    pub const BarHeight: f32 = 216.0;
     pub const InputHeight: f32 = 32.0;
     pub const InputPadding: f32 = 12.0;
     pub const SubmitWidth: f32 = 40.0;
@@ -591,11 +622,17 @@ pub const ConsoleElement = struct {
 
     bounding_box: [4]f32,
 
+    scroll_pos_percentage: f32,
+
+    hovered: bool,
+
     pub fn init(x: f32, y: f32, w: f32, h: f32) ConsoleElement {
         _ = h;
 
         return ConsoleElement{
             .bounding_box = .{ x, y, w, BarHeight },
+            .scroll_pos_percentage = 0,
+            .hovered = false,
         };
     }
 
@@ -628,6 +665,7 @@ pub const ConsoleElement = struct {
             self.bounding_box[2] - InputPadding * 3.0 - SubmitWidth,
         );
 
+        // Draw text box
         quads[1] = QuadInstance.init(
             input_x,
             input_y,
@@ -636,6 +674,7 @@ pub const ConsoleElement = struct {
             InputColor,
         );
 
+        // Draw button
         quads[2] = QuadInstance.init(
             input_x + input_w + InputPadding,
             input_y,
@@ -644,6 +683,7 @@ pub const ConsoleElement = struct {
             AccentColor,
         );
 
+        // Draw background
         quads[3] = QuadInstance.init(
             self.bounding_box[0],
             self.bounding_box[1],
@@ -656,6 +696,7 @@ pub const ConsoleElement = struct {
         const scroll_y = self.bounding_box[1] + InputPadding;
         const scroll_h = @max(0.0, input_y - InputPadding - scroll_y);
 
+        // Draw scroll track
         quads[4] = QuadInstance.init(
             scroll_x,
             scroll_y,
@@ -664,15 +705,31 @@ pub const ConsoleElement = struct {
             ScrollTrackColor,
         );
 
+        const thumb_h = @min(ScrollThumbHeight, scroll_h);
+        const thumb_y = scroll_y + (1.0 - std.math.clamp(self.scroll_pos_percentage, 0.0, 1.0)) * (scroll_h - thumb_h);
+
+        // Draw scroll thumb
         quads[5] = QuadInstance.init(
             scroll_x,
-            scroll_y,
+            thumb_y,
             ScrollWidth,
-            @min(ScrollThumbHeight, scroll_h),
+            thumb_h,
             ScrollThumbColor,
         );
 
         return 6;
+    }
+
+    pub fn contains(self: ConsoleElement, x: f32, y: f32) bool {
+        if (y < self.bounding_box[1] or y >= self.bounding_box[1] + self.bounding_box[3]) {
+            return false;
+        }
+
+        if (x < self.bounding_box[0] or x >= self.bounding_box[0] + self.bounding_box[2]) {
+            return false;
+        }
+
+        return true;
     }
 };
 
@@ -1655,7 +1712,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                     const x = event.button.x;
                     const y = event.button.y;
 
-                    if (event.button.button == sdl.SDL_BUTTON_RIGHT and interface.canvas.contains(x, y)) {
+                    if (event.button.button == sdl.SDL_BUTTON_RIGHT and interface.canvas.hovered) {
                         interface.canvas.dragging = true;
                     }
                     std.log.info("Click down at ({d}, {d})", .{ x, y });
@@ -1665,7 +1722,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                     const x = event.button.x;
                     const y = event.button.y;
 
-                    if (event.button.button == sdl.SDL_BUTTON_RIGHT and interface.canvas.contains(x, y)) {
+                    if (event.button.button == sdl.SDL_BUTTON_RIGHT) {
                         interface.canvas.dragging = false;
                     }
 
@@ -1679,15 +1736,26 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                         delta = -delta;
                     }
 
-                    const bounds = interface.canvas.bounding_box;
-                    interface.canvas.camera.center_zoom(
-                        .{ bounds[2] / 2, bounds[3] / 2 },
-                        std.math.pow(f32, 1.1, delta),
-                    );
+                    if (interface.canvas.hovered) {
+                        const bounds = interface.canvas.bounding_box;
 
-                    interface.toolbar.zoom = interface.canvas.camera.zoom * 100;
+                        interface.canvas.camera.center_zoom(
+                            .{ bounds[2] / 2, bounds[3] / 2 },
+                            std.math.pow(f32, 1.1, delta),
+                        );
 
-                    interface.dirty = true;
+                        interface.toolbar.zoom = interface.canvas.camera.zoom * 100;
+
+                        interface.dirty = true;
+                    } else if (interface.console.hovered) {
+                        interface.console.scroll_pos_percentage = std.math.clamp(
+                            interface.console.scroll_pos_percentage + 0.02 * delta,
+                            0.0,
+                            1.0,
+                        );
+
+                        interface.dirty = true;
+                    }
                 },
 
                 sdl.SDL_EVENT_MOUSE_MOTION => {
@@ -1701,10 +1769,20 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                     if (interface.canvas.contains(x, y)) {
                         const dx = event.motion.xrel;
                         const dy = event.motion.yrel;
+                        interface.canvas.hovered = true;
 
-                        if (interface.canvas.dragging) interface.canvas.camera.drag(dx, dy);
+                        if (interface.canvas.dragging) {
+                            interface.canvas.camera.drag(dx, dy);
+                            interface.dirty = true;
+                        }
+                    } else {
+                        interface.canvas.hovered = false;
+                    }
 
-                        interface.dirty = true;
+                    if (interface.console.contains(x, y)) {
+                        interface.console.hovered = true;
+                    } else {
+                        interface.console.hovered = false;
                     }
                 },
 
