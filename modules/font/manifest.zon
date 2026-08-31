@@ -12,5 +12,9 @@
             .path = "modules/font/AtkinsonHyperlegible-Regular.ttf",
             .pixels_per_em = 14,
         },
+        .atikinsons_hyperlegible_mono_regular_14 = .{
+            .path = "modules/font/AtkinsonHyperlegibleMono-Regular.ttf",
+            .pixels_per_em = 14,
+        },
     },
 }

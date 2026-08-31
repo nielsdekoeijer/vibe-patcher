@@ -194,7 +194,9 @@ const FontModule = struct {
         import_name: []const u8,
         entry: FontDescription,
     ) void {
+        // TODO: for whatever reason, on the first build this 'fails', but actually it doesn't and we just can rebuild
         const command = b.addSystemCommand(&.{"msdf-atlas-gen"});
+
         command.addArg("-font");
         command.addArg(b.fmt("{s}", .{entry.path}));
         command.addArg("-type");
