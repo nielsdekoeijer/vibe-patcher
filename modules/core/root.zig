@@ -9,7 +9,7 @@ const QuadFrag = @import("quad_frag").shader;
 const GlyphVert = @import("glyph_vert").shader;
 const GlyphFrag = @import("glyph_frag").shader;
 
-const InterRegular14 = @import("atikinsons_hyperlegible_regular_14").font;
+const DefaultFont = @import("atikinsons_hyperlegible_regular_14").font;
 
 fn hexColor(comptime hex: []const u8) [4]f32 {
     if (hex.len != 7 or hex[0] != '#') @compileError("expected #RRGGBB");
@@ -35,13 +35,31 @@ pub const ProjectionMatrixUniform = extern struct {
         data[13] = (2.0 * y + h) / h;
         data[15] = 1.0;
 
-        return ProjectionMatrixUniform{
+        return .{
             .data = data,
         };
     }
 
     pub fn screen(w: u32, h: u32) ProjectionMatrixUniform {
         return ortho(0, 0, @floatFromInt(w), @floatFromInt(h));
+    }
+};
+
+/// Camera struct for describing our Camera2D
+pub const Camera2D = struct {
+    position: [2]f32,
+    zoom: f32,
+
+    pub fn init() Camera2D {
+        return .{
+            .position = @splat(0),
+            .zoom = 1.0,
+        };
+    }
+
+    pub fn drag(self: *Camera2D, dx: f32, dy: f32) void {
+        self.position[0] -= dx / self.zoom;
+        self.position[1] -= dy / self.zoom;
     }
 };
 
@@ -84,7 +102,7 @@ pub const GlyphInstance = extern struct {
     color: [4]f32,
 
     pub fn init(char: u8, pos: *[2]f32, color: [4]f32) ?GlyphInstance {
-        const glyph = &font_module.FontAtlas(InterRegular14.config).CharacterGlyphs[char];
+        const glyph = &font_module.FontAtlas(DefaultFont.config).CharacterGlyphs[char];
 
         const glyph_x = pos[0];
         pos[0] += glyph.x_advance;
@@ -120,7 +138,7 @@ pub const GlyphInstance = extern struct {
         var cursor: [2]f32 = @splat(0);
 
         for (string) |char| {
-            const glyph = &font_module.FontAtlas(InterRegular14.config).CharacterGlyphs[char];
+            const glyph = &font_module.FontAtlas(DefaultFont.config).CharacterGlyphs[char];
 
             cursor[0] += glyph.x_advance;
 
@@ -147,36 +165,39 @@ pub const UserInterface = struct {
 
     status: StatusElement,
 
+    canvas: CanvasElement,
+
     dirty: bool,
 
     pub fn resize(self: *UserInterface, w: f32, h: f32) void {
         self.menubar = MenubarElement.init(0, 0, w, h);
 
         const toolbar_y = MenubarElement.BarHeight;
-
-        self.toolbar = ToolbarElement.init(0, toolbar_y, w, h);
+        self.toolbar = .init(0, toolbar_y, w, h);
 
         const selector_y = toolbar_y + ToolbarElement.BarHeight;
         const selector_h = h - MenubarElement.BarHeight - ToolbarElement.BarHeight - StatusElement.BarHeight;
-
-        self.selector = SelectorElement.init(0, selector_y, w, selector_h);
+        self.selector = .init(0, selector_y, w, selector_h);
 
         const inspector_x = w - InspectorElement.BarWidth;
         const inspector_y = selector_y;
         const inspector_h = selector_h;
-
-        self.inspector = InspectorElement.init(inspector_x, inspector_y, w, inspector_h);
+        self.inspector = .init(inspector_x, inspector_y, w, inspector_h);
 
         const status_y = h - StatusElement.BarHeight;
-
-        self.status = StatusElement.init(0, status_y, w, h);
+        self.status = .init(0, status_y, w, h);
 
         const console_x = SelectorElement.BarWidth;
         const console_y = h - ConsoleElement.BarHeight - StatusElement.BarHeight;
         const console_w = w - InspectorElement.BarWidth - SelectorElement.BarWidth;
         const console_h = h;
+        self.console = .init(console_x, console_y, console_w, console_h);
 
-        self.console = ConsoleElement.init(console_x, console_y, console_w, console_h);
+        const canvas_x = SelectorElement.BarWidth;
+        const canvas_y = MenubarElement.BarHeight + ToolbarElement.BarHeight;
+        const canvas_w = w - SelectorElement.BarWidth - InspectorElement.BarWidth;
+        const canvas_h = h - canvas_y - ConsoleElement.BarHeight - StatusElement.BarHeight;
+        self.canvas = .init(canvas_x, canvas_y, canvas_w, canvas_h);
 
         self.dirty = true;
     }
@@ -184,9 +205,9 @@ pub const UserInterface = struct {
     pub fn generate_quad_instances(self: UserInterface, out: []QuadInstance) usize {
         var index: usize = 0;
 
-        index += self.status.generate_quad_instances(
-            out[index..],
-        );
+        index += self.canvas.generate_quad_instances(out[index..]);
+
+        index += self.status.generate_quad_instances(out[index..]);
 
         index += self.menubar.generate_quad_instances(out[index..]);
 
@@ -245,14 +266,14 @@ pub const MenubarElement = struct {
 
     pub const Options = [_]Option{ .init("File"), .init("Edit"), .init("View"), .init("Object") };
 
-    background_shape: [4]f32,
+    bounding_box: [4]f32,
     hovered_option_index: ?usize,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) MenubarElement {
         _ = h;
 
         return MenubarElement{
-            .background_shape = .{ x, y, w, BarHeight },
+            .bounding_box = .{ x, y, w, BarHeight },
             .hovered_option_index = null,
         };
     }
@@ -261,7 +282,7 @@ pub const MenubarElement = struct {
         const previous = self.hovered_option_index;
         self.hovered_option_index = null;
 
-        if (y >= self.background_shape[1] and y < self.background_shape[1] + self.background_shape[3]) {
+        if (y >= self.bounding_box[1] and y < self.bounding_box[1] + self.bounding_box[3]) {
             var cursor_x = TextCursor[0];
 
             for (Options, 0..) |option, index| {
@@ -297,25 +318,61 @@ pub const MenubarElement = struct {
     pub fn generate_quad_instances(self: MenubarElement, out: []QuadInstance) usize {
         out[0] = .{
             .color = MenubarElement.BackgroundColor,
-            .shape = self.background_shape,
+            .shape = self.bounding_box,
         };
 
         const hovered = self.hovered_option_index orelse return 1;
-        var cursor_x = TextCursor[0];
 
+        var cursor_x = TextCursor[0];
         for (Options[0..hovered]) |option| {
             cursor_x += option.bounding_box[0] + OptionPadding * 2;
         }
 
         out[1] = QuadInstance.init(
             cursor_x - OptionPadding,
-            self.background_shape[1],
+            self.bounding_box[1],
             Options[hovered].bounding_box[0] + OptionPadding * 2,
-            self.background_shape[3],
+            self.bounding_box[3],
             HoverColor,
         );
 
         return 2;
+    }
+};
+
+pub const CanvasElement = struct {
+    pub const BackgroundColor = ClearColorHex;
+    pub const GridColor = hexColor("#293241");
+    pub const GridSpacing: f32 = 24.0;
+    pub const GridLineWidth: f32 = 1.0;
+
+    bounding_box: [4]f32,
+
+    pub fn init(x: f32, y: f32, w: f32, h: f32) CanvasElement {
+        return CanvasElement{
+            .bounding_box = .{ x, y, w, h },
+        };
+    }
+
+    pub fn contains(self: CanvasElement, x: f32, y: f32) bool {
+        if (y < self.bounding_box[1] and y >= self.bounding_box[1] + self.bounding_box[3]) {
+            return false;
+        }
+
+        if (x < self.bounding_box[0] and x >= self.bounding_box[0] + self.bounding_box[2]) {
+            return false;
+        }
+
+        return true;
+    }
+
+    pub fn generate_quad_instances(self: CanvasElement, quads: []QuadInstance) usize {
+        quads[0] = .{
+            .color = CanvasElement.BackgroundColor,
+            .shape = self.bounding_box,
+        };
+
+        return 1;
     }
 };
 
@@ -324,20 +381,20 @@ pub const ToolbarElement = struct {
     pub const BackgroundColor = hexColor("#202A38");
     pub const BarHeight: f32 = 24.0;
 
-    background_shape: [4]f32,
+    bounding_box: [4]f32,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) ToolbarElement {
         _ = h;
 
         return ToolbarElement{
-            .background_shape = .{ x, y, w, BarHeight },
+            .bounding_box = .{ x, y, w, BarHeight },
         };
     }
 
     pub fn generate_quad_instances(self: ToolbarElement, quads: []QuadInstance) usize {
         quads[0] = .{
             .color = ToolbarElement.BackgroundColor,
-            .shape = self.background_shape,
+            .shape = self.bounding_box,
         };
 
         return 1;
@@ -349,20 +406,20 @@ pub const SelectorElement = struct {
     pub const BackgroundColor = hexColor("#151B24");
     pub const BarWidth: f32 = 48.0;
 
-    background_shape: [4]f32,
+    bounding_box: [4]f32,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) SelectorElement {
         _ = w;
 
         return SelectorElement{
-            .background_shape = .{ x, y, BarWidth, h },
+            .bounding_box = .{ x, y, BarWidth, h },
         };
     }
 
     pub fn generate_quad_instances(self: SelectorElement, quads: []QuadInstance) usize {
         quads[0] = .{
             .color = SelectorElement.BackgroundColor,
-            .shape = self.background_shape,
+            .shape = self.bounding_box,
         };
 
         return 1;
@@ -374,20 +431,20 @@ pub const InspectorElement = struct {
     pub const BackgroundColor = hexColor("#151B24");
     pub const BarWidth: f32 = 48.0;
 
-    background_shape: [4]f32,
+    bounding_box: [4]f32,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) InspectorElement {
         _ = w;
 
         return InspectorElement{
-            .background_shape = .{ x, y, BarWidth, h },
+            .bounding_box = .{ x, y, BarWidth, h },
         };
     }
 
     pub fn generate_quad_instances(self: InspectorElement, quads: []QuadInstance) usize {
         quads[0] = .{
             .color = InspectorElement.BackgroundColor,
-            .shape = self.background_shape,
+            .shape = self.bounding_box,
         };
 
         return 1;
@@ -399,20 +456,20 @@ pub const StatusElement = struct {
     pub const BackgroundColor = hexColor("#202A38");
     pub const BarHeight: f32 = 24.0;
 
-    background_shape: [4]f32,
+    bounding_box: [4]f32,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) StatusElement {
         _ = h;
 
         return StatusElement{
-            .background_shape = .{ x, y, w, BarHeight },
+            .bounding_box = .{ x, y, w, BarHeight },
         };
     }
 
     pub fn generate_quad_instances(self: StatusElement, quads: []QuadInstance) usize {
         quads[0] = .{
             .color = StatusElement.BackgroundColor,
-            .shape = self.background_shape,
+            .shape = self.bounding_box,
         };
 
         return 1;
@@ -424,20 +481,20 @@ pub const ConsoleElement = struct {
     pub const BackgroundColor = hexColor("#171E29");
     pub const BarHeight: f32 = 120.0;
 
-    background_shape: [4]f32,
+    bounding_box: [4]f32,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) ConsoleElement {
         _ = h;
 
         return ConsoleElement{
-            .background_shape = .{ x, y, w, BarHeight },
+            .bounding_box = .{ x, y, w, BarHeight },
         };
     }
 
     pub fn generate_quad_instances(self: ConsoleElement, quads: []QuadInstance) usize {
         quads[0] = .{
             .color = BackgroundColor,
-            .shape = self.background_shape,
+            .shape = self.bounding_box,
         };
 
         return 1;
@@ -609,7 +666,8 @@ const SwapchainTexture = struct {
 const WindowName: [*:0]const u8 = "vibe-patcher";
 
 /// Our default clear color
-const ClearColor: sdl.SDL_FColor = @bitCast(hexColor("#D9DEE5"));
+const ClearColorHex = hexColor("#D9DEE5");
+const ClearColor: sdl.SDL_FColor = @bitCast(ClearColorHex);
 
 /// Initialize the SDL3 library with the specified subsystems
 fn SDL3Initialize() SDL3Error!void {
@@ -689,7 +747,7 @@ fn SDL3GPUDestroyWindow(device: *sdl.SDL_GPUDevice, window: *sdl.SDL_Window) voi
 
 /// Acquire a command buffer from an SDL3 GPU
 fn SDL3AcquireGPUCommandBuffer(device: *sdl.SDL_GPUDevice) SDL3Error!*sdl.SDL_GPUCommandBuffer {
-    std.log.debug("Acquiring command buffer from SDL3 GPU...", .{});
+    std.log.debug("Acquiring command buffer from SDL3 GPU", .{});
     errdefer std.log.err("Acquiring command buffer from SDL3 GPU failed: '{s}'", .{sdl.SDL_GetError()});
 
     const command_buffer = sdl.SDL_AcquireGPUCommandBuffer(device) orelse {
@@ -714,19 +772,21 @@ fn SDL3SubmitGPUCommandBuffer(command_buffer: *sdl.SDL_GPUCommandBuffer) SDL3Err
 }
 
 fn SDL3GPUColorTargetInfos(texture: *sdl.SDL_GPUTexture) [1]sdl.SDL_GPUColorTargetInfo {
-    return .{.{
-        .texture = texture,
-        .load_op = sdl.SDL_GPU_LOADOP_CLEAR,
-        .store_op = sdl.SDL_GPU_STOREOP_STORE,
-        .clear_color = ClearColor,
-        .mip_level = 0,
-        .resolve_mip_level = 0,
-        .cycle = false,
-        .resolve_layer = 0,
-        .resolve_texture = null,
-        .cycle_resolve_texture = false,
-        .layer_or_depth_plane = 0,
-    }};
+    return .{
+        .{
+            .texture = texture,
+            .load_op = sdl.SDL_GPU_LOADOP_CLEAR,
+            .store_op = sdl.SDL_GPU_STOREOP_STORE,
+            .clear_color = ClearColor,
+            .mip_level = 0,
+            .resolve_mip_level = 0,
+            .cycle = false,
+            .resolve_layer = 0,
+            .resolve_texture = null,
+            .cycle_resolve_texture = false,
+            .layer_or_depth_plane = 0,
+        },
+    };
 }
 
 /// Begin a SDL3 GPU render pass
@@ -818,7 +878,7 @@ fn SDL3PollEvent() ?sdl.SDL_Event {
 
 /// Load a SDL3 GPU shader from bytecode
 fn SDL3GPUCreateShader(device: *sdl.SDL_GPUDevice, shader: shader_module.Shader) SDL3Error!*sdl.SDL_GPUShader {
-    const str = "Creating SDL3 GPU shader...";
+    const str = "Creating SDL3 GPU shader";
     std.log.info("{s}...", .{str});
     errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
@@ -862,7 +922,7 @@ fn SDL3GPUCreateGraphicsPipeline(
     vertex_input_state: sdl.SDL_GPUVertexInputState,
     blend: bool,
 ) SDL3Error!*sdl.SDL_GPUGraphicsPipeline {
-    const str = "Creating SDL3 GPU graphics pipeline...";
+    const str = "Creating SDL3 GPU graphics pipeline";
     std.log.info("{s}...", .{str});
     errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
@@ -1048,7 +1108,7 @@ fn SDL3GPUCreateBuffer(
     usage: SDL3BufferUsage,
     size: u32,
 ) SDL3Error!*sdl.SDL_GPUBuffer {
-    const str = "Creating SDL3 GPU buffer...";
+    const str = "Creating SDL3 GPU buffer";
     std.log.info("{s}...", .{str});
     errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
@@ -1208,7 +1268,7 @@ fn SDL3GPUTextureUpload(
 
 /// Create an SDL3 GPU sampler for the glyph atlas.
 fn SDL3GPUCreateSamplerGlyph(device: *sdl.SDL_GPUDevice) SDL3Error!*sdl.SDL_GPUSampler {
-    const str = "Creating SDL3 GPU sampler for glyphs...";
+    const str = "Creating SDL3 GPU sampler for glyphs";
     std.log.info("{s}...", .{str});
     errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
@@ -1246,38 +1306,27 @@ fn SDL3GPUDestroySampler(device: *sdl.SDL_GPUDevice, sampler: *sdl.SDL_GPUSample
 
 /// Main entrypoint into the program
 pub fn run(settings: ProgramSettings) SDL3Error!void {
+    var interface = UserInterface.init(@floatFromInt(settings.window_w), @floatFromInt(settings.window_h));
+
+    // Setup device + windowing
     try SDL3Initialize();
     defer SDL3Quit();
 
     const device = try SDL3CreateGPUDevice(settings.shader_format, settings.enable_gpu_debug);
     defer SDL3DestroyGPUDevice(device);
 
+    const window = try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
+    defer SDL3DestroyWindow(window);
+
+    try SDL3GPUClaimWindow(device, window);
+    defer SDL3GPUDestroyWindow(device, window);
+
+    // Setup quad pipeline
     const quad_vert = try SDL3GPUCreateShader(device, QuadVert);
     defer SDL3GPUDestroyShader(device, quad_vert);
 
     const quad_frag = try SDL3GPUCreateShader(device, QuadFrag);
     defer SDL3GPUDestroyShader(device, quad_frag);
-
-    const glyph_vert = try SDL3GPUCreateShader(device, GlyphVert);
-    defer SDL3GPUDestroyShader(device, glyph_vert);
-
-    const glyph_frag = try SDL3GPUCreateShader(device, GlyphFrag);
-    defer SDL3GPUDestroyShader(device, glyph_frag);
-
-    const window = try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
-    defer SDL3DestroyWindow(window);
-
-    const glyph_w = InterRegular14.config.atlas.width;
-    const glyph_h = InterRegular14.config.atlas.height;
-    const glyph_texture = try SDL3GPUCreateTextureGlyph(device, glyph_w, glyph_h);
-    defer SDL3GPUDestroyTexture(device, glyph_texture);
-    try SDL3GPUTextureUpload(device, glyph_texture, glyph_w, glyph_h, InterRegular14.data);
-
-    const glyph_sampler = try SDL3GPUCreateSamplerGlyph(device);
-    defer SDL3GPUDestroySampler(device, glyph_sampler);
-
-    try SDL3GPUClaimWindow(device, window);
-    defer SDL3GPUDestroyWindow(device, window);
 
     const quad_pipeline = try SDL3GPUCreateGraphicsPipeline(
         device,
@@ -1289,6 +1338,36 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     );
     defer SDL3GPUDestroyGraphicsPipeline(device, quad_pipeline);
 
+    const QuadCapacity = 4096;
+    const quad_buffer = try SDL3GPUCreateBuffer(
+        device,
+        .GRAPHICS_STORAGE_READ,
+        QuadCapacity * @sizeOf(QuadInstance),
+    );
+    defer SDL3GPUDestroyBuffer(device, quad_buffer);
+
+    var quad_count: usize = 0;
+    var quad_scratch: [256]QuadInstance = undefined;
+
+    // Setup glyph pipeline
+    const glyph_vert = try SDL3GPUCreateShader(device, GlyphVert);
+    defer SDL3GPUDestroyShader(device, glyph_vert);
+
+    const glyph_frag = try SDL3GPUCreateShader(device, GlyphFrag);
+    defer SDL3GPUDestroyShader(device, glyph_frag);
+
+    const glyph_w = DefaultFont.config.atlas.width;
+    const glyph_h = DefaultFont.config.atlas.height;
+    const glyph_data = DefaultFont.data;
+    const glyph_ubo = GlyphUniform.init(font_module.FontAtlas(DefaultFont.config));
+
+    const glyph_texture = try SDL3GPUCreateTextureGlyph(device, glyph_w, glyph_h);
+    defer SDL3GPUDestroyTexture(device, glyph_texture);
+    try SDL3GPUTextureUpload(device, glyph_texture, glyph_w, glyph_h, glyph_data);
+
+    const glyph_sampler = try SDL3GPUCreateSamplerGlyph(device);
+    defer SDL3GPUDestroySampler(device, glyph_sampler);
+
     const glyph_pipeline = try SDL3GPUCreateGraphicsPipeline(
         device,
         window,
@@ -1299,16 +1378,6 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     );
     defer SDL3GPUDestroyGraphicsPipeline(device, glyph_pipeline);
 
-    var interface = UserInterface.init(@floatFromInt(settings.window_w), @floatFromInt(settings.window_h));
-
-    const QuadCapacity = 4096;
-    const quad_buffer = try SDL3GPUCreateBuffer(
-        device,
-        .GRAPHICS_STORAGE_READ,
-        QuadCapacity * @sizeOf(QuadInstance),
-    );
-    defer SDL3GPUDestroyBuffer(device, quad_buffer);
-
     const GlyphCapacity = 4096;
     const glyph_buffer = try SDL3GPUCreateBuffer(
         device,
@@ -1317,13 +1386,8 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     );
     defer SDL3GPUDestroyBuffer(device, glyph_buffer);
 
-    var quad_count: usize = 0;
-    var quad_scratch: [256]QuadInstance = undefined;
-
     var glyph_count: usize = 0;
     var glyph_scratch: [256]GlyphInstance = undefined;
-    glyph_count += interface.generate_glyph_instances(&glyph_scratch);
-    try SDL3GPUBufferUpload(device, glyph_buffer, std.mem.sliceAsBytes(glyph_scratch[0..glyph_count]));
 
     var should_run = true;
     while (should_run) {
@@ -1369,10 +1433,13 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
         if (!should_run) break;
 
         const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
+
         const swapchain_texture = try SDL3AcquireGPUSwapchainTextureBlocking(command_buffer, window) orelse {
             try SDL3SubmitGPUCommandBuffer(command_buffer);
             continue;
         };
+
+        const projection_ubo = ProjectionMatrixUniform.screen(swapchain_texture.w, swapchain_texture.h);
 
         if (interface.dirty) {
             quad_count = 0;
@@ -1381,14 +1448,17 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
             try SDL3GPUBufferUpload(device, quad_buffer, std.mem.sliceAsBytes(quad_scratch[0..quad_count]));
 
+            glyph_count = 0;
+
+            glyph_count += interface.generate_glyph_instances(&glyph_scratch);
+
+            try SDL3GPUBufferUpload(device, glyph_buffer, std.mem.sliceAsBytes(glyph_scratch[0..glyph_count]));
+
             interface.dirty = false;
         }
 
         const color_target_infos = SDL3GPUColorTargetInfos(swapchain_texture.tex);
         const render_pass = try SDL3BeginGPURenderPass(command_buffer, &color_target_infos, null);
-
-        const projection_ubo = ProjectionMatrixUniform.screen(swapchain_texture.w, swapchain_texture.h);
-        const glyph_ubo = GlyphUniform.init(font_module.FontAtlas(InterRegular14.config));
 
         // quads
         SDL3GPUBindPipeline(render_pass, quad_pipeline);
