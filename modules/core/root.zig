@@ -310,6 +310,7 @@ pub const UserInterface = struct {
         var index: usize = 0;
 
         index += self.toolbar.generate_glyph_instances(out[index..]);
+        index += self.console.generate_glyph_instances(out[index..]);
 
         return index;
     }
@@ -573,8 +574,20 @@ pub const StatusElement = struct {
 
 pub const ConsoleElement = struct {
     pub const TextColor = hexColor("#F1F5FA", 1.0);
+    pub const InputTextColor = hexColor("#171E29", 1.0);
     pub const BackgroundColor = hexColor("#171E29", 1.0);
-    pub const BarHeight: f32 = 120.0;
+    pub const InputColor = hexColor("#FFFFFF", 1.0);
+    pub const AccentColor = hexColor("#5B8DEF", 1.0);
+    pub const SeparatorColor = hexColor("#293241", 1.0);
+    pub const ScrollTrackColor = hexColor("#202A38", 1.0);
+    pub const ScrollThumbColor = hexColor("#5B687A", 1.0);
+    pub const BarHeight: f32 = 168.0;
+    pub const InputHeight: f32 = 32.0;
+    pub const InputPadding: f32 = 12.0;
+    pub const SubmitWidth: f32 = 40.0;
+    pub const SeparatorHeight: f32 = 1.0;
+    pub const ScrollWidth: f32 = 4.0;
+    pub const ScrollThumbHeight: f32 = 28.0;
 
     bounding_box: [4]f32,
 
@@ -586,13 +599,80 @@ pub const ConsoleElement = struct {
         };
     }
 
+    pub fn generate_glyph_instances(self: ConsoleElement, out: []GlyphInstance) usize {
+        const input_y = self.bounding_box[1] + self.bounding_box[3] - InputPadding - InputHeight;
+        var cursor: [2]f32 = .{
+            self.bounding_box[0] + InputPadding + 10.0,
+            input_y + 21.0,
+        };
+
+        return GlyphInstance.text(
+            MonoFont.config,
+            ">",
+            &cursor,
+            InputTextColor,
+            out,
+        );
+    }
+
     pub fn generate_quad_instances(self: ConsoleElement, quads: []QuadInstance) usize {
         quads[0] = .{
             .color = BackgroundColor,
             .shape = self.bounding_box,
         };
 
-        return 1;
+        const input_x = self.bounding_box[0] + InputPadding;
+        const input_y = self.bounding_box[1] + self.bounding_box[3] - InputPadding - InputHeight;
+        const input_w = @max(
+            0.0,
+            self.bounding_box[2] - InputPadding * 3.0 - SubmitWidth,
+        );
+
+        quads[1] = QuadInstance.init(
+            input_x,
+            input_y,
+            input_w,
+            InputHeight,
+            InputColor,
+        );
+
+        quads[2] = QuadInstance.init(
+            input_x + input_w + InputPadding,
+            input_y,
+            SubmitWidth,
+            InputHeight,
+            AccentColor,
+        );
+
+        quads[3] = QuadInstance.init(
+            self.bounding_box[0],
+            self.bounding_box[1],
+            self.bounding_box[2],
+            SeparatorHeight,
+            SeparatorColor,
+        );
+
+        const scroll_x = self.bounding_box[0] + self.bounding_box[2] - InputPadding - ScrollWidth;
+        const scroll_y = self.bounding_box[1] + InputPadding;
+        const scroll_h = @max(0.0, input_y - InputPadding - scroll_y);
+
+        quads[4] = QuadInstance.init(
+            scroll_x,
+            scroll_y,
+            ScrollWidth,
+            scroll_h,
+            ScrollTrackColor,
+        );
+
+        quads[5] = QuadInstance.init(
+            scroll_x,
+            scroll_y,
+            ScrollWidth,
+            @min(ScrollThumbHeight, scroll_h),
+            ScrollThumbColor,
+        );
+
+        return 6;
     }
 };
 
@@ -1575,7 +1655,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                     const x = event.button.x;
                     const y = event.button.y;
 
-                    if (event.button.button == sdl.SDL_BUTTON_LEFT and interface.canvas.contains(x, y)) {
+                    if (event.button.button == sdl.SDL_BUTTON_RIGHT and interface.canvas.contains(x, y)) {
                         interface.canvas.dragging = true;
                     }
                     std.log.info("Click down at ({d}, {d})", .{ x, y });
@@ -1585,7 +1665,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                     const x = event.button.x;
                     const y = event.button.y;
 
-                    if (event.button.button == sdl.SDL_BUTTON_LEFT and interface.canvas.contains(x, y)) {
+                    if (event.button.button == sdl.SDL_BUTTON_RIGHT and interface.canvas.contains(x, y)) {
                         interface.canvas.dragging = false;
                     }
 
