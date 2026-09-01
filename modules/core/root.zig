@@ -88,7 +88,8 @@ pub const NodeInstance = extern struct {
         outer_color: [4]f32,
         rounding: f32,
         border_width_px: f32,
-        kind: Kind,
+        inplet_count: f32,
+        outlet_count: f32,
     ) NodeInstance {
         return NodeInstance{
             .shape = shape,
@@ -96,7 +97,8 @@ pub const NodeInstance = extern struct {
             .outer_color = outer_color,
             .rounding = rounding,
             .border_width_px = border_width_px,
-            .kind = kind,
+            .inplet_count = inplet_count,
+            .outlet_count = outlet_count,
         };
     }
 };
@@ -1868,7 +1870,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
         node_vert,
         node_frag,
         std.mem.zeroes(sdl.SDL_GPUVertexInputState),
-        false,
+        true,
     );
     defer SDL3GPUDestroyGraphicsPipeline(device, node_pipeline);
 
@@ -2094,6 +2096,16 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             try SDL3GPUBufferUpload(device, quad_buffer, std.mem.sliceAsBytes(quad_scratch[0..quad_count]));
 
             node_count = 0;
+            node_scratch[node_count] = NodeInstance.init(
+                .{ 80.0, 80.0, 240.0, 140.0 },
+                hexColor("#25344A", 1.0),
+                hexColor("#60A5FA", 1.0),
+                20.0,
+                3.0,
+                0.0,
+                0.0,
+            );
+            node_count += 1;
             try SDL3GPUBufferUpload(device, node_buffer, std.mem.sliceAsBytes(node_scratch[0..node_count]));
 
             default_glyph_count = 0;
@@ -2130,6 +2142,35 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
                 SDL3GPUSetScissor(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
 
                 SDL3GPUDraw(render_pass, 4, 1);
+            }
+
+            SDL3GPUSetViewport(render_pass, 0, 0, w, h);
+            SDL3GPUSetScissor(render_pass, 0, 0, w, h);
+        }
+
+        // nodes
+        {
+            const w: f32 = @floatFromInt(swapchain_texture.w);
+            const h: f32 = @floatFromInt(swapchain_texture.h);
+            const bounds = interface.canvas.bounding_box;
+
+            if (bounds[2] > 0.0 and bounds[3] > 0.0) {
+                const camera = interface.canvas.camera;
+                const node_projection = ProjectionMatrixUniform.ortho(
+                    camera.position[0],
+                    camera.position[1],
+                    bounds[2] / camera.zoom,
+                    bounds[3] / camera.zoom,
+                );
+
+                SDL3GPUBindPipeline(render_pass, node_pipeline);
+                SDL3GPUPushVertexUniformData(command_buffer, 0, std.mem.asBytes(&node_projection));
+                SDL3GPUBindVertexStorageBuffers(render_pass, .{node_buffer});
+
+                SDL3GPUSetViewport(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
+                SDL3GPUSetScissor(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
+
+                SDL3GPUDraw(render_pass, NodeInstance.VertexCount, node_count);
             }
 
             SDL3GPUSetViewport(render_pass, 0, 0, w, h);
