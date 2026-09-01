@@ -9,6 +9,9 @@ const CanvasFrag = @import("canvas_frag").shader;
 const QuadVert = @import("quad_vert").shader;
 const QuadFrag = @import("quad_frag").shader;
 
+const NodeVert = @import("node_vert").shader;
+const NodeFrag = @import("node_frag").shader;
+
 const GlyphVert = @import("glyph_vert").shader;
 const GlyphFrag = @import("glyph_frag").shader;
 
@@ -35,6 +38,69 @@ pub fn log_fn(
     interface.dirty = true;
 }
 
+const Inplet = struct {
+    name_buf: [8]u8,
+    name_len: u4,
+};
+
+const Outlet = struct {
+    name_buf: [8]u8,
+    name_len: u4,
+};
+
+const Node = struct {
+    name_buf: [16]u8,
+    name_len: u5,
+
+    inplet_buf: [16]Inplet,
+    inplet_len: u5,
+
+    outlet_buf: [16]Outlet,
+    outlet_len: u5,
+
+    pub fn name(self: *const Node) []const u8 {
+        return self.name_buf[0..self.name_len];
+    }
+
+    pub fn inplets(self: *const Node) []const Inplet {
+        return self.inplet_buf[0..self.inplet_len];
+    }
+
+    pub fn outlets(self: *const Node) []const Outlet {
+        return self.outlet_buf[0..self.outlet_len];
+    }
+};
+
+pub const NodeInstance = extern struct {
+    const VertexCount = 4;
+
+    shape: [4]f32,
+    inner_color: [4]f32,
+    outer_color: [4]f32,
+    rounding: f32,
+    border_width_px: f32,
+    inplet_count: f32,
+    outlet_count: f32,
+
+    pub fn init(
+        shape: [4]f32,
+        inner_color: [4]f32,
+        outer_color: [4]f32,
+        rounding: f32,
+        border_width_px: f32,
+        kind: Kind,
+    ) NodeInstance {
+        return NodeInstance{
+            .shape = shape,
+            .inner_color = inner_color,
+            .outer_color = outer_color,
+            .rounding = rounding,
+            .border_width_px = border_width_px,
+            .kind = kind,
+        };
+    }
+};
+
 /// Comptime helper
 fn hexColor(comptime hex: []const u8, alpha: f32) [4]f32 {
     if (hex.len != 7 or hex[0] != '#') @compileError("expected #RRGGBB");
@@ -44,6 +110,23 @@ fn hexColor(comptime hex: []const u8, alpha: f32) [4]f32 {
         @as(f32, @floatFromInt(std.fmt.parseInt(u8, hex[5..7], 16) catch unreachable)) / 255.0,
         alpha,
     };
+}
+
+pub fn random_vibrant_color(random: std.Random) [4]f32 {
+    const palette = [_][4]f32{
+        hexColor("#FF0A54", 1.0), hexColor("#FF204E", 1.0),
+        hexColor("#FF3A5A", 1.0), hexColor("#FF5768", 1.0),
+        hexColor("#FF6F3C", 1.0), hexColor("#FF9100", 1.0),
+        hexColor("#FFD500", 1.0), hexColor("#D7FF00", 1.0),
+        hexColor("#A7FF00", 1.0), hexColor("#39FF14", 1.0),
+        hexColor("#00FF4B", 1.0), hexColor("#00FFA8", 1.0),
+        hexColor("#00F8FF", 1.0), hexColor("#00BFFF", 1.0),
+        hexColor("#007BFF", 1.0), hexColor("#5A00FF", 1.0),
+        hexColor("#A600FF", 1.0), hexColor("#E600FF", 1.0),
+        hexColor("#FF00C8", 1.0), hexColor("#FF008A", 1.0),
+    };
+
+    return palette[random.uintLessThanBiased(usize, palette.len)];
 }
 
 /// Helper struct for our projection matrix
@@ -305,7 +388,7 @@ pub const UserInterface = struct {
         self.console.reinit(content_x, console_y, content_w, console_h);
 
         const canvas_h = console_y - content_y;
-        self.canvas = .init(content_x, content_y, content_w, canvas_h);
+        self.canvas.reinit(content_x, content_y, content_w, canvas_h);
 
         self.dirty = true;
     }
@@ -352,6 +435,7 @@ pub const UserInterface = struct {
     pub fn init(w: f32, h: f32) UserInterface {
         var interface: UserInterface = undefined;
         interface.console = .init(0, 0, w, h);
+        interface.canvas = .init(0, 0, w, h);
 
         interface.resize(w, h);
 
@@ -479,6 +563,10 @@ pub const CanvasElement = struct {
             .camera = .init(),
             .hovered = false,
         };
+    }
+
+    pub fn reinit(self: *CanvasElement, x: f32, y: f32, w: f32, h: f32) void {
+        self.bounding_box = .{ x, y, @max(0.0, w), @max(0.0, h) };
     }
 
     pub fn contains(self: CanvasElement, x: f32, y: f32) bool {
@@ -706,7 +794,7 @@ pub const ConsoleElement = struct {
         self.bounding_box = .{ x, y, @max(0.0, w), @min(BarHeight, @max(0.0, h)) };
     }
 
-    pub fn active_buffer_ptr(self: ConsoleElement) *const TextBuffer {
+    pub fn active_buffer_ptr(self: *const ConsoleElement) *const TextBuffer {
         return &self.buffers[@intFromEnum(self.active_buffer)];
     }
 
@@ -741,6 +829,21 @@ pub const ConsoleElement = struct {
                 self.bounding_box[0] + InputPadding + 10.0,
                 input_y + 21.0 - 35.0 - @as(f32, @floatFromInt(i)) * 16.0,
             };
+
+            var prefix_buffer: [5]u8 = undefined;
+            const prefix = std.fmt.bufPrint(
+                &prefix_buffer,
+                "{d:0>4} ",
+                .{@min(buf.view_head + i, 9999)},
+            ) catch unreachable;
+
+            count += GlyphInstance.text(
+                ConsoleFont.config,
+                prefix,
+                &cursor,
+                TextColor,
+                out[count..],
+            );
 
             count += GlyphInstance.text(
                 ConsoleFont.config,
@@ -1481,6 +1584,8 @@ fn SDL3GPUBufferUpload(
     target: *sdl.SDL_GPUBuffer,
     bytes: []const u8,
 ) SDL3Error!void {
+    if (bytes.len == 0) return;
+
     const str = "Uploading to SDL3 GPU buffer";
     std.log.debug("{s}...", .{str});
     errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
@@ -1750,6 +1855,34 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     var quad_count: usize = 0;
     var quad_scratch: [QuadCapacity]QuadInstance = undefined;
 
+    // Setup node pipeline
+    const node_vert = try SDL3GPUCreateShader(device, NodeVert);
+    defer SDL3GPUDestroyShader(device, node_vert);
+
+    const node_frag = try SDL3GPUCreateShader(device, NodeFrag);
+    defer SDL3GPUDestroyShader(device, node_frag);
+
+    const node_pipeline = try SDL3GPUCreateGraphicsPipeline(
+        device,
+        window,
+        node_vert,
+        node_frag,
+        std.mem.zeroes(sdl.SDL_GPUVertexInputState),
+        false,
+    );
+    defer SDL3GPUDestroyGraphicsPipeline(device, node_pipeline);
+
+    const NodeCapacity = 4096;
+    const node_buffer = try SDL3GPUCreateBuffer(
+        device,
+        .GRAPHICS_STORAGE_READ,
+        NodeCapacity * @sizeOf(NodeInstance),
+    );
+    defer SDL3GPUDestroyBuffer(device, node_buffer);
+
+    var node_count: usize = 0;
+    var node_scratch: [NodeCapacity]NodeInstance = undefined;
+
     // Setup glyph pipeline
     const glyph_vert = try SDL3GPUCreateShader(device, GlyphVert);
     defer SDL3GPUDestroyShader(device, glyph_vert);
@@ -1959,6 +2092,9 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             quad_count = 0;
             quad_count += interface.generate_quad_instances(quad_scratch[quad_count..]);
             try SDL3GPUBufferUpload(device, quad_buffer, std.mem.sliceAsBytes(quad_scratch[0..quad_count]));
+
+            node_count = 0;
+            try SDL3GPUBufferUpload(device, node_buffer, std.mem.sliceAsBytes(node_scratch[0..node_count]));
 
             default_glyph_count = 0;
             default_glyph_count += interface.generate_default_glyph_instances(&default_glyph_scratch);

@@ -7,6 +7,13 @@
             .num_storage_buffers = 1,
             .num_uniform_buffers = 1,
         },
+        .node = .{
+            .path = "modules/shader/node.vert",
+            .num_samplers = 0,
+            .num_storage_textures = 0,
+            .num_storage_buffers = 1,
+            .num_uniform_buffers = 1,
+        },
         .glyph = .{
             .path = "modules/shader/glyph.vert",
             .num_samplers = 0,
@@ -32,6 +39,13 @@
     .frags = .{
         .quad = .{
             .path = "modules/shader/quad.frag",
+            .num_samplers = 0,
+            .num_storage_textures = 0,
+            .num_storage_buffers = 0,
+            .num_uniform_buffers = 0,
+        },
+        .node = .{
+            .path = "modules/shader/node.frag",
             .num_samplers = 0,
             .num_storage_textures = 0,
             .num_storage_buffers = 0,
