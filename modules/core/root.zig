@@ -205,8 +205,13 @@ pub const GlyphInstance = extern struct {
         var index: usize = 0;
 
         for (string) |char| {
-            out[index] = GlyphInstance.init(config, char, cursor, color) orelse continue;
-            index += 1;
+            if (GlyphInstance.init(config, char, cursor, color)) |glyph| {
+                if (index == out.len) return index;
+
+                out[index] = glyph;
+
+                index += 1;
+            }
         }
 
         return index;
@@ -310,6 +315,13 @@ pub const UserInterface = struct {
         var index: usize = 0;
 
         index += self.toolbar.generate_glyph_instances(out[index..]);
+
+        return index;
+    }
+
+    pub fn generate_console_glyph_instances(self: UserInterface, out: []GlyphInstance) usize {
+        var index: usize = 0;
+
         index += self.console.generate_glyph_instances(out[index..]);
 
         return index;
@@ -578,6 +590,8 @@ pub const StatusElement = struct {
 };
 
 pub const ConsoleElement = struct {
+    pub const ConsoleLineCount: usize = 4;
+
     pub const TextBuffer = struct {
         /// Total number of lines, should be power of 2 for cheaper wrap
         const LineCount = 512;
@@ -591,17 +605,56 @@ pub const ConsoleElement = struct {
         /// Length of each given line
         length_per_line: [LineCount]u16,
 
+        /// Scroll head position
+        view_head: usize,
+
         /// Position of current buffer cursor
-        head: usize,
+        line_head: usize,
 
         pub fn init() TextBuffer {
             return .{
-                .buffer = @splat(0),
+                .buffer = @splat(@splat(0)),
                 .length_per_line = @splat(0),
-                .head = 0,
+                .line_head = 0,
+                .view_head = 0,
             };
         }
+
+        pub fn write_line(self: *TextBuffer, comptime fmt: []const u8, args: anytype) void {
+            const index = self.line_head;
+
+            const string = std.fmt.bufPrint(self.buffer[index][0..CharCount], fmt, args) catch return;
+
+            self.length_per_line[index] = @intCast(string.len);
+
+            self.increment_line_head(1);
+        }
+
+        pub fn read_line(self: TextBuffer, offset: usize) []const u8 {
+            const index = (self.line_head -% 1 -% self.view_head -% offset) & (LineCount - 1);
+            const len = self.length_per_line[index];
+
+            return self.buffer[index][0..len];
+        }
+
+        pub fn increment_view_head(self: *TextBuffer, val: usize) void {
+            self.view_head = @min(self.view_head + val, LineCount - 1);
+        }
+
+        pub fn decrement_view_head(self: *TextBuffer, val: usize) void {
+            self.view_head -|= val;
+        }
+
+        pub fn increment_line_head(self: *TextBuffer, val: usize) void {
+            self.line_head = (self.line_head +% val) & (LineCount - 1);
+        }
+
+        pub fn decrement_line_head(self: *TextBuffer, val: usize) void {
+            self.line_head = (self.line_head -% val) & (LineCount - 1);
+        }
     };
+
+    pub const AttachedBuffers = enum(u8) { Console, Agent, Debug };
 
     pub const TextColor = hexColor("#F1F5FA", 1.0);
     pub const InputTextColor = hexColor("#171E29", 1.0);
@@ -619,37 +672,71 @@ pub const ConsoleElement = struct {
     pub const SeparatorHeight: f32 = 1.0;
     pub const ScrollWidth: f32 = 4.0;
     pub const ScrollThumbHeight: f32 = 28.0;
-
     bounding_box: [4]f32,
 
-    scroll_pos_percentage: f32,
-
     hovered: bool,
+
+    active_buffer: AttachedBuffers,
+
+    buffers: [3]TextBuffer,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) ConsoleElement {
         _ = h;
 
         return ConsoleElement{
             .bounding_box = .{ x, y, w, BarHeight },
-            .scroll_pos_percentage = 0,
             .hovered = false,
+            .buffers = @splat(.init()),
+            .active_buffer = AttachedBuffers.Console,
         };
     }
 
-    pub fn generate_glyph_instances(self: ConsoleElement, out: []GlyphInstance) usize {
-        const input_y = self.bounding_box[1] + self.bounding_box[3] - InputPadding - InputHeight;
-        var cursor: [2]f32 = .{
-            self.bounding_box[0] + InputPadding + 10.0,
-            input_y + 21.0,
-        };
+    pub fn active_buffer_ptr(self: ConsoleElement) *const TextBuffer {
+        return &self.buffers[@intFromEnum(self.active_buffer)];
+    }
 
-        return GlyphInstance.text(
-            MonoFont.config,
-            ">",
-            &cursor,
-            InputTextColor,
-            out,
-        );
+    pub fn active_buffer_ptr_mut(self: *ConsoleElement) *TextBuffer {
+        return &self.buffers[@intFromEnum(self.active_buffer)];
+    }
+
+    pub fn generate_glyph_instances(self: ConsoleElement, out: []GlyphInstance) usize {
+        var count: usize = 0;
+
+        const input_y = self.bounding_box[1] + self.bounding_box[3] - InputPadding - InputHeight;
+
+        {
+            var cursor: [2]f32 = .{
+                self.bounding_box[0] + InputPadding + 10.0,
+                input_y + 21.0,
+            };
+
+            count += GlyphInstance.text(
+                MonoFont.config,
+                ">",
+                &cursor,
+                InputTextColor,
+                out[count..],
+            );
+        }
+
+        var buf = self.active_buffer_ptr();
+
+        for (0..32) |i| {
+            var cursor: [2]f32 = .{
+                self.bounding_box[0] + InputPadding + 10.0,
+                input_y + 21.0 - 35.0 - @as(f32, @floatFromInt(i)) * 16.0,
+            };
+
+            count += GlyphInstance.text(
+                MonoFont.config,
+                buf.read_line(i),
+                &cursor,
+                TextColor,
+                out[count..],
+            );
+        }
+
+        return count;
     }
 
     pub fn generate_quad_instances(self: ConsoleElement, quads: []QuadInstance) usize {
@@ -705,8 +792,11 @@ pub const ConsoleElement = struct {
             ScrollTrackColor,
         );
 
+        const scroll_pos_percentage: f32 = @as(f32, @floatFromInt(self.active_buffer_ptr().view_head)) /
+            @as(f32, @floatFromInt(TextBuffer.LineCount - 1));
+
         const thumb_h = @min(ScrollThumbHeight, scroll_h);
-        const thumb_y = scroll_y + (1.0 - std.math.clamp(self.scroll_pos_percentage, 0.0, 1.0)) * (scroll_h - thumb_h);
+        const thumb_y = scroll_y + (1.0 - std.math.clamp(scroll_pos_percentage, 0.0, 1.0)) * (scroll_h - thumb_h);
 
         // Draw scroll thumb
         quads[5] = QuadInstance.init(
@@ -1680,6 +1770,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     defer SDL3GPUDestroyGraphicsPipeline(device, glyph_pipeline);
 
     const GlyphCapacity = 4096;
+
     const default_glyph_buffer = try SDL3GPUCreateBuffer(
         device,
         .GRAPHICS_STORAGE_READ,
@@ -1694,14 +1785,30 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     );
     defer SDL3GPUDestroyBuffer(device, mono_glyph_buffer);
 
+    const console_glyph_buffer = try SDL3GPUCreateBuffer(
+        device,
+        .GRAPHICS_STORAGE_READ,
+        GlyphCapacity * @sizeOf(GlyphInstance),
+    );
+    defer SDL3GPUDestroyBuffer(device, console_glyph_buffer);
+
     var default_glyph_count: usize = 0;
     var default_glyph_scratch: [GlyphCapacity]GlyphInstance = undefined;
 
     var mono_glyph_count: usize = 0;
     var mono_glyph_scratch: [GlyphCapacity]GlyphInstance = undefined;
 
+    var console_glyph_count: usize = 0;
+    var console_glyph_scratch: [GlyphCapacity]GlyphInstance = undefined;
+
+    var counter: usize = 0;
+
     var should_run = true;
     while (should_run) {
+        counter += 1;
+        interface.console.active_buffer_ptr_mut().write_line("{}", .{counter});
+        interface.dirty = true;
+
         while (SDL3PollEvent()) |event| {
             switch (event.type) {
                 sdl.SDL_EVENT_QUIT => {
@@ -1748,11 +1855,11 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
                         interface.dirty = true;
                     } else if (interface.console.hovered) {
-                        interface.console.scroll_pos_percentage = std.math.clamp(
-                            interface.console.scroll_pos_percentage + 0.02 * delta,
-                            0.0,
-                            1.0,
-                        );
+                        if (delta > 0) {
+                            interface.console.active_buffer_ptr_mut().increment_view_head(10);
+                        } else if (delta < 0) {
+                            interface.console.active_buffer_ptr_mut().decrement_view_head(10);
+                        }
 
                         interface.dirty = true;
                     }
@@ -1831,8 +1938,12 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             mono_glyph_count = 0;
             mono_glyph_count += interface.generate_mono_glyph_instances(&mono_glyph_scratch);
 
+            console_glyph_count = 0;
+            console_glyph_count += interface.generate_console_glyph_instances(&console_glyph_scratch);
+
             try SDL3GPUBufferUpload(device, default_glyph_buffer, std.mem.sliceAsBytes(default_glyph_scratch[0..default_glyph_count]));
             try SDL3GPUBufferUpload(device, mono_glyph_buffer, std.mem.sliceAsBytes(mono_glyph_scratch[0..mono_glyph_count]));
+            try SDL3GPUBufferUpload(device, console_glyph_buffer, std.mem.sliceAsBytes(console_glyph_scratch[0..console_glyph_count]));
 
             canvas_ubo = CanvasUniform.init(interface.canvas);
 
@@ -1873,17 +1984,32 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             SDL3GPUBindPipeline(render_pass, glyph_pipeline);
             SDL3GPUPushVertexUniformData(command_buffer, 0, std.mem.asBytes(&projection_ubo));
 
+            // default 
             SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&default_glyph_ubo));
             SDL3GPUBindVertexStorageBuffers(render_pass, .{default_glyph_buffer});
             SDL3GPUBindFragmentSampler(render_pass, default_glyph_texture, default_glyph_sampler);
 
             SDL3GPUDraw(render_pass, GlyphInstance.VertexCount, default_glyph_count);
 
+            // mono
             SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&mono_glyph_ubo));
             SDL3GPUBindVertexStorageBuffers(render_pass, .{mono_glyph_buffer});
             SDL3GPUBindFragmentSampler(render_pass, mono_glyph_texture, mono_glyph_sampler);
 
             SDL3GPUDraw(render_pass, GlyphInstance.VertexCount, mono_glyph_count);
+
+            // console
+            const w: f32 = @floatFromInt(swapchain_texture.w);
+            const h: f32 = @floatFromInt(swapchain_texture.h);
+            const bounds = interface.console.bounding_box;
+
+            SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&mono_glyph_ubo));
+            SDL3GPUBindVertexStorageBuffers(render_pass, .{console_glyph_buffer});
+            SDL3GPUBindFragmentSampler(render_pass, mono_glyph_texture, mono_glyph_sampler);
+
+            SDL3GPUSetScissor(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
+            SDL3GPUDraw(render_pass, GlyphInstance.VertexCount, console_glyph_count);
+            SDL3GPUSetScissor(render_pass, 0, 0, w, h);
         }
 
         SDL3EndGPURenderPass(render_pass);
