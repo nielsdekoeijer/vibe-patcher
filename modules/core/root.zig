@@ -67,7 +67,7 @@ pub const ProjectionMatrixUniform = extern struct {
     }
 
     pub fn screen(w: u32, h: u32) ProjectionMatrixUniform {
-        return ortho(0, 0, @floatFromInt(w), @floatFromInt(h));
+        return ortho(0, 0, @floatFromInt(@max(w, 1)), @floatFromInt(@max(h, 1)));
     }
 };
 
@@ -276,34 +276,36 @@ pub const UserInterface = struct {
     dirty: bool,
 
     pub fn resize(self: *UserInterface, w: f32, h: f32) void {
-        self.menubar = MenubarElement.init(0, 0, w, h);
+        const safe_w = @max(0.0, w);
+        const safe_h = @max(0.0, h);
 
-        const toolbar_y = MenubarElement.BarHeight;
-        self.toolbar = .init(0, toolbar_y, w, h);
+        const menubar_h = @min(MenubarElement.BarHeight, safe_h);
+        self.menubar = MenubarElement.init(0, 0, safe_w, menubar_h);
 
-        const selector_y = toolbar_y + ToolbarElement.BarHeight;
-        const selector_h = h - MenubarElement.BarHeight - ToolbarElement.BarHeight - StatusElement.BarHeight;
-        self.selector = .init(0, selector_y, w, selector_h);
+        const toolbar_y = menubar_h;
+        const toolbar_h = @min(ToolbarElement.BarHeight, safe_h - toolbar_y);
+        self.toolbar = .init(0, toolbar_y, safe_w, toolbar_h);
 
-        const inspector_x = w - InspectorElement.BarWidth;
-        const inspector_y = selector_y;
-        const inspector_h = selector_h;
-        self.inspector = .init(inspector_x, inspector_y, w, inspector_h);
+        const content_y = toolbar_y + toolbar_h;
+        const status_h = @min(StatusElement.BarHeight, safe_h - content_y);
+        const status_y = safe_h - status_h;
+        self.status = .init(0, status_y, safe_w, status_h);
 
-        const status_y = h - StatusElement.BarHeight;
-        self.status = .init(0, status_y, w, h);
+        const side_h = status_y - content_y;
+        const selector_w = @min(SelectorElement.BarWidth, safe_w);
+        const inspector_w = @min(InspectorElement.BarWidth, safe_w - selector_w);
+        const inspector_x = safe_w - inspector_w;
+        self.selector = .init(0, content_y, selector_w, side_h);
+        self.inspector = .init(inspector_x, content_y, inspector_w, side_h);
 
-        const console_x = SelectorElement.BarWidth;
-        const console_y = h - ConsoleElement.BarHeight - StatusElement.BarHeight;
-        const console_w = w - InspectorElement.BarWidth - SelectorElement.BarWidth;
-        const console_h = h;
-        self.console.reinit(console_x, console_y, console_w, console_h);
+        const content_x = selector_w;
+        const content_w = safe_w - selector_w - inspector_w;
+        const console_h = @min(ConsoleElement.BarHeight, side_h);
+        const console_y = status_y - console_h;
+        self.console.reinit(content_x, console_y, content_w, console_h);
 
-        const canvas_x = SelectorElement.BarWidth;
-        const canvas_y = MenubarElement.BarHeight + ToolbarElement.BarHeight;
-        const canvas_w = w - SelectorElement.BarWidth - InspectorElement.BarWidth;
-        const canvas_h = h - canvas_y - ConsoleElement.BarHeight - StatusElement.BarHeight;
-        self.canvas = .init(canvas_x, canvas_y, canvas_w, canvas_h);
+        const canvas_h = console_y - content_y;
+        self.canvas = .init(content_x, content_y, content_w, canvas_h);
 
         self.dirty = true;
     }
@@ -388,10 +390,8 @@ pub const MenubarElement = struct {
     hovered_option_index: ?usize,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) MenubarElement {
-        _ = h;
-
         return MenubarElement{
-            .bounding_box = .{ x, y, w, BarHeight },
+            .bounding_box = .{ x, y, @max(0.0, w), @min(BarHeight, @max(0.0, h)) },
             .hovered_option_index = null,
         };
     }
@@ -474,7 +474,7 @@ pub const CanvasElement = struct {
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) CanvasElement {
         return CanvasElement{
-            .bounding_box = .{ x, y, w, h },
+            .bounding_box = .{ x, y, @max(0.0, w), @max(0.0, h) },
             .dragging = false,
             .camera = .init(),
             .hovered = false,
@@ -504,10 +504,8 @@ pub const ToolbarElement = struct {
     zoom: f32,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) ToolbarElement {
-        _ = h;
-
         return ToolbarElement{
-            .bounding_box = .{ x, y, w, BarHeight },
+            .bounding_box = .{ x, y, @max(0.0, w), @min(BarHeight, @max(0.0, h)) },
             .zoom = 100,
         };
     }
@@ -543,10 +541,8 @@ pub const SelectorElement = struct {
     bounding_box: [4]f32,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) SelectorElement {
-        _ = w;
-
         return SelectorElement{
-            .bounding_box = .{ x, y, BarWidth, h },
+            .bounding_box = .{ x, y, @min(BarWidth, @max(0.0, w)), @max(0.0, h) },
         };
     }
 
@@ -568,10 +564,8 @@ pub const InspectorElement = struct {
     bounding_box: [4]f32,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) InspectorElement {
-        _ = w;
-
         return InspectorElement{
-            .bounding_box = .{ x, y, BarWidth, h },
+            .bounding_box = .{ x, y, @min(BarWidth, @max(0.0, w)), @max(0.0, h) },
         };
     }
 
@@ -593,10 +587,8 @@ pub const StatusElement = struct {
     bounding_box: [4]f32,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) StatusElement {
-        _ = h;
-
         return StatusElement{
-            .bounding_box = .{ x, y, w, BarHeight },
+            .bounding_box = .{ x, y, @max(0.0, w), @min(BarHeight, @max(0.0, h)) },
         };
     }
 
@@ -702,10 +694,8 @@ pub const ConsoleElement = struct {
     buffers: [3]TextBuffer,
 
     pub fn init(x: f32, y: f32, w: f32, h: f32) ConsoleElement {
-        _ = h;
-
         return ConsoleElement{
-            .bounding_box = .{ x, y, w, BarHeight },
+            .bounding_box = .{ x, y, @max(0.0, w), @min(BarHeight, @max(0.0, h)) },
             .hovered = false,
             .buffers = @splat(.init()),
             .active_buffer = AttachedBuffers.Console,
@@ -713,8 +703,7 @@ pub const ConsoleElement = struct {
     }
 
     pub fn reinit(self: *ConsoleElement, x: f32, y: f32, w: f32, h: f32) void {
-        _ = h;
-        self.bounding_box = .{ x, y, w, BarHeight };
+        self.bounding_box = .{ x, y, @max(0.0, w), @min(BarHeight, @max(0.0, h)) };
     }
 
     pub fn active_buffer_ptr(self: ConsoleElement) *const TextBuffer {
@@ -1659,10 +1648,10 @@ fn SDL3GPUSetViewport(
     h: f32,
 ) void {
     const viewport = sdl.SDL_GPUViewport{
-        .x = x,
-        .y = y,
-        .w = w,
-        .h = h,
+        .x = @max(0.0, x),
+        .y = @max(0.0, y),
+        .w = @max(0.0, w),
+        .h = @max(0.0, h),
         .min_depth = 0.0,
         .max_depth = 1.0,
     };
@@ -1678,11 +1667,12 @@ fn SDL3GPUSetScissor(
     w: f32,
     h: f32,
 ) void {
+    const max_int: f32 = @floatFromInt(std.math.maxInt(i32));
     const rect = sdl.SDL_Rect{
-        .x = @intFromFloat(x),
-        .y = @intFromFloat(y),
-        .w = @intFromFloat(w),
-        .h = @intFromFloat(h),
+        .x = @intFromFloat(std.math.clamp(x, 0.0, max_int)),
+        .y = @intFromFloat(std.math.clamp(y, 0.0, max_int)),
+        .w = @intFromFloat(std.math.clamp(w, 0.0, max_int)),
+        .h = @intFromFloat(std.math.clamp(h, 0.0, max_int)),
     };
 
     sdl.SDL_SetGPUScissor(render_pass, &rect);
@@ -1997,12 +1987,14 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             const h: f32 = @floatFromInt(swapchain_texture.h);
             const bounds = interface.canvas.bounding_box;
 
-            SDL3GPUBindPipeline(render_pass, canvas_pipeline);
-            SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&canvas_ubo));
-            SDL3GPUSetViewport(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
-            SDL3GPUSetScissor(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
+            if (bounds[2] > 0.0 and bounds[3] > 0.0) {
+                SDL3GPUBindPipeline(render_pass, canvas_pipeline);
+                SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&canvas_ubo));
+                SDL3GPUSetViewport(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
+                SDL3GPUSetScissor(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
 
-            SDL3GPUDraw(render_pass, 4, 1);
+                SDL3GPUDraw(render_pass, 4, 1);
+            }
 
             SDL3GPUSetViewport(render_pass, 0, 0, w, h);
             SDL3GPUSetScissor(render_pass, 0, 0, w, h);
