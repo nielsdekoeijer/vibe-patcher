@@ -14,6 +14,26 @@ const GlyphFrag = @import("glyph_frag").shader;
 
 const DefaultFont = @import("atikinsons_hyperlegible_regular_14").font;
 const MonoFont = @import("atikinsons_hyperlegible_mono_regular_14").font;
+const ConsoleFont = @import("roboto_mono_regular_12").font;
+
+var log_sink: ?*UserInterface = null;
+
+pub fn set_sink(interface: *UserInterface) void {
+    log_sink = interface;
+}
+
+pub fn log_fn(
+    comptime level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    std.log.defaultLog(level, scope, format, args);
+
+    const interface = log_sink orelse return;
+    interface.console.active_buffer_ptr_mut().write_line(format, args);
+    interface.dirty = true;
+}
 
 /// Comptime helper
 fn hexColor(comptime hex: []const u8, alpha: f32) [4]f32 {
@@ -277,7 +297,7 @@ pub const UserInterface = struct {
         const console_y = h - ConsoleElement.BarHeight - StatusElement.BarHeight;
         const console_w = w - InspectorElement.BarWidth - SelectorElement.BarWidth;
         const console_h = h;
-        self.console = .init(console_x, console_y, console_w, console_h);
+        self.console.reinit(console_x, console_y, console_w, console_h);
 
         const canvas_x = SelectorElement.BarWidth;
         const canvas_y = MenubarElement.BarHeight + ToolbarElement.BarHeight;
@@ -329,6 +349,7 @@ pub const UserInterface = struct {
 
     pub fn init(w: f32, h: f32) UserInterface {
         var interface: UserInterface = undefined;
+        interface.console = .init(0, 0, w, h);
 
         interface.resize(w, h);
 
@@ -656,7 +677,7 @@ pub const ConsoleElement = struct {
 
     pub const AttachedBuffers = enum(u8) { Console, Agent, Debug };
 
-    pub const TextColor = hexColor("#F1F5FA", 1.0);
+    pub const TextColor = hexColor("#9EACBE", 0.8);
     pub const InputTextColor = hexColor("#171E29", 1.0);
     pub const BackgroundColor = hexColor("#171E29", 1.0);
     pub const InputColor = hexColor("#FFFFFF", 1.0);
@@ -691,6 +712,11 @@ pub const ConsoleElement = struct {
         };
     }
 
+    pub fn reinit(self: *ConsoleElement, x: f32, y: f32, w: f32, h: f32) void {
+        _ = h;
+        self.bounding_box = .{ x, y, w, BarHeight };
+    }
+
     pub fn active_buffer_ptr(self: ConsoleElement) *const TextBuffer {
         return &self.buffers[@intFromEnum(self.active_buffer)];
     }
@@ -711,7 +737,7 @@ pub const ConsoleElement = struct {
             };
 
             count += GlyphInstance.text(
-                MonoFont.config,
+                ConsoleFont.config,
                 ">",
                 &cursor,
                 InputTextColor,
@@ -728,7 +754,7 @@ pub const ConsoleElement = struct {
             };
 
             count += GlyphInstance.text(
-                MonoFont.config,
+                ConsoleFont.config,
                 buf.read_line(i),
                 &cursor,
                 TextColor,
@@ -1462,7 +1488,7 @@ fn SDL3GPUBufferUpload(
     bytes: []const u8,
 ) SDL3Error!void {
     const str = "Uploading to SDL3 GPU buffer";
-    std.log.info("{s}...", .{str});
+    std.log.debug("{s}...", .{str});
     errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
     const transfer = sdl.SDL_CreateGPUTransferBuffer(
@@ -1499,7 +1525,7 @@ fn SDL3GPUBufferUpload(
         try SDL3SubmitGPUCommandBuffer(cmd);
     }
 
-    std.log.info("{s} OK", .{str});
+    std.log.debug("{s} OK", .{str});
 }
 
 /// Create a texture to be used with glyphs
@@ -1667,6 +1693,7 @@ fn SDL3GPUDestroySampler(device: *sdl.SDL_GPUDevice, sampler: *sdl.SDL_GPUSample
 /// Main entrypoint into the program
 pub fn run(settings: ProgramSettings) SDL3Error!void {
     var interface = UserInterface.init(@floatFromInt(settings.window_w), @floatFromInt(settings.window_h));
+    set_sink(&interface);
 
     // Setup device + windowing
     try SDL3Initialize();
@@ -1753,11 +1780,23 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     defer SDL3GPUDestroyTexture(device, mono_glyph_texture);
     try SDL3GPUTextureUpload(device, mono_glyph_texture, mono_glyph_w, mono_glyph_h, mono_glyph_data);
 
+    const console_glyph_w = ConsoleFont.config.atlas.width;
+    const console_glyph_h = ConsoleFont.config.atlas.height;
+    const console_glyph_data = ConsoleFont.data;
+    const console_glyph_ubo = GlyphUniform.init(font_module.FontAtlas(ConsoleFont.config));
+
+    const console_glyph_texture = try SDL3GPUCreateTextureGlyph(device, console_glyph_w, console_glyph_h);
+    defer SDL3GPUDestroyTexture(device, console_glyph_texture);
+    try SDL3GPUTextureUpload(device, console_glyph_texture, console_glyph_w, console_glyph_h, console_glyph_data);
+
     const default_glyph_sampler = try SDL3GPUCreateSamplerGlyph(device);
     defer SDL3GPUDestroySampler(device, default_glyph_sampler);
 
     const mono_glyph_sampler = try SDL3GPUCreateSamplerGlyph(device);
     defer SDL3GPUDestroySampler(device, mono_glyph_sampler);
+
+    const console_glyph_sampler = try SDL3GPUCreateSamplerGlyph(device);
+    defer SDL3GPUDestroySampler(device, console_glyph_sampler);
 
     const glyph_pipeline = try SDL3GPUCreateGraphicsPipeline(
         device,
@@ -1801,14 +1840,8 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     var console_glyph_count: usize = 0;
     var console_glyph_scratch: [GlyphCapacity]GlyphInstance = undefined;
 
-    var counter: usize = 0;
-
     var should_run = true;
     while (should_run) {
-        counter += 1;
-        interface.console.active_buffer_ptr_mut().write_line("{}", .{counter});
-        interface.dirty = true;
-
         while (SDL3PollEvent()) |event| {
             switch (event.type) {
                 sdl.SDL_EVENT_QUIT => {
@@ -1960,8 +1993,8 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             const bounds = interface.canvas.bounding_box;
 
             SDL3GPUBindPipeline(render_pass, canvas_pipeline);
-            SDL3GPUSetViewport(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
             SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&canvas_ubo));
+            SDL3GPUSetViewport(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
             SDL3GPUSetScissor(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
 
             SDL3GPUDraw(render_pass, 4, 1);
@@ -1984,7 +2017,7 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             SDL3GPUBindPipeline(render_pass, glyph_pipeline);
             SDL3GPUPushVertexUniformData(command_buffer, 0, std.mem.asBytes(&projection_ubo));
 
-            // default 
+            // default
             SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&default_glyph_ubo));
             SDL3GPUBindVertexStorageBuffers(render_pass, .{default_glyph_buffer});
             SDL3GPUBindFragmentSampler(render_pass, default_glyph_texture, default_glyph_sampler);
@@ -2003,11 +2036,17 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
             const h: f32 = @floatFromInt(swapchain_texture.h);
             const bounds = interface.console.bounding_box;
 
-            SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&mono_glyph_ubo));
+            SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&console_glyph_ubo));
             SDL3GPUBindVertexStorageBuffers(render_pass, .{console_glyph_buffer});
-            SDL3GPUBindFragmentSampler(render_pass, mono_glyph_texture, mono_glyph_sampler);
+            SDL3GPUBindFragmentSampler(render_pass, console_glyph_texture, console_glyph_sampler);
 
-            SDL3GPUSetScissor(render_pass, bounds[0], bounds[1], bounds[2], bounds[3]);
+            SDL3GPUSetScissor(
+                render_pass,
+                bounds[0],
+                bounds[1],
+                bounds[2] - 2.0 * ConsoleElement.InputPadding - ConsoleElement.ScrollWidth,
+                bounds[3],
+            );
             SDL3GPUDraw(render_pass, GlyphInstance.VertexCount, console_glyph_count);
             SDL3GPUSetScissor(render_pass, 0, 0, w, h);
         }

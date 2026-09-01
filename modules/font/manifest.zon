@@ -4,6 +4,10 @@
             .path = "modules/font/RobotoMono-Regular.ttf",
             .pixels_per_em = 16,
         },
+        .roboto_mono_regular_12 = .{
+            .path = "modules/font/RobotoMono-Regular.ttf",
+            .pixels_per_em = 12,
+        },
         .inter_regular_14 = .{
             .path = "modules/font/Inter-Regular.ttf",
             .pixels_per_em = 14,
