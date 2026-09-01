@@ -1019,14 +1019,15 @@ const ClearColor: sdl.SDL_FColor = @bitCast(ClearColorHex);
 
 /// Initialize the SDL3 library with the specified subsystems
 fn SDL3Initialize() SDL3Error!void {
-    std.log.info("Initializing SDL3 backend...", .{});
-    errdefer std.log.err("Initializing SDL3 backend failed: '{s}'", .{sdl.SDL_GetError()});
+    const str = "Initializing SDL3 backend";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
     if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_AUDIO)) {
         return SDL3Error.LibraryInitialization;
     }
 
-    std.log.info("Initializing SDL3 backend OK", .{});
+    std.log.info("{s} OK", .{str});
 }
 
 /// Clean up the specified SDL3 subsystems
@@ -1037,14 +1038,15 @@ fn SDL3Quit() void {
 
 /// Create an SDL3 GPU context
 fn SDL3CreateGPUDevice(shader_format: SDL3ShaderFormat, debug: bool) SDL3Error!*sdl.SDL_GPUDevice {
-    std.log.info("Creating SDL3 GPU device...", .{});
-    errdefer std.log.err("Creating SDL3 GPU device failed: '{s}'", .{sdl.SDL_GetError()});
+    const str = "Creating SDL3 GPU device";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
     const device = sdl.SDL_CreateGPUDevice(@intFromEnum(shader_format), debug, null) orelse {
         return SDL3Error.UnexpectedNullPointer;
     };
 
-    std.log.info("Creating SDL3 GPU device OK", .{});
+    std.log.info("{s} OK", .{str});
     return device;
 }
 
@@ -1056,15 +1058,16 @@ fn SDL3DestroyGPUDevice(device: *sdl.SDL_GPUDevice) void {
 
 /// Create an SDL3 window
 fn SDL3CreateWindow(title: [*:0]const u8, w: u32, h: u32) SDL3Error!*sdl.SDL_Window {
-    std.log.info("Creating SDL3 Window...", .{});
-    errdefer std.log.err("Creating SDL3 GPU device failed: '{s}'", .{sdl.SDL_GetError()});
+    const str = "Creating SDL3 window";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
     const flags = sdl.SDL_WINDOW_RESIZABLE | sdl.SDL_WINDOW_HIGH_PIXEL_DENSITY;
     const window = sdl.SDL_CreateWindow(title, @intCast(w), @intCast(h), flags) orelse {
         return SDL3Error.UnexpectedNullPointer;
     };
 
-    std.log.info("Creating SDL3 Window OK", .{});
+    std.log.info("{s} OK", .{str});
     return window;
 }
 
@@ -1076,14 +1079,15 @@ fn SDL3DestroyWindow(window: *sdl.SDL_Window) void {
 
 /// Claim the SDL3 window to the gpu
 fn SDL3GPUClaimWindow(device: *sdl.SDL_GPUDevice, window: *sdl.SDL_Window) SDL3Error!void {
-    std.log.info("Claiming SDL3 window for our GPU...", .{});
-    errdefer std.log.err("Claiming SDL3 window for our GPU failed: '{s}'", .{sdl.SDL_GetError()});
+    const str = "Claiming SDL3 window for our GPU";
+    std.log.info("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
     if (sdl.SDL_ClaimWindowForGPUDevice(device, window) != true) {
         return SDL3Error.GPUInitialization;
     }
 
-    std.log.info("Claiming SDL3 window for our GPU OK", .{});
+    std.log.info("{s} OK", .{str});
 }
 
 /// Claim the SDL3 window from the GPU
@@ -1095,14 +1099,15 @@ fn SDL3GPUDestroyWindow(device: *sdl.SDL_GPUDevice, window: *sdl.SDL_Window) voi
 
 /// Acquire a command buffer from an SDL3 GPU
 fn SDL3AcquireGPUCommandBuffer(device: *sdl.SDL_GPUDevice) SDL3Error!*sdl.SDL_GPUCommandBuffer {
-    std.log.debug("Acquiring command buffer from SDL3 GPU", .{});
-    errdefer std.log.err("Acquiring command buffer from SDL3 GPU failed: '{s}'", .{sdl.SDL_GetError()});
+    const str = "Acquiring command buffer from SDL3 GPU";
+    std.log.debug("{s}...", .{str});
+    errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
 
     const command_buffer = sdl.SDL_AcquireGPUCommandBuffer(device) orelse {
         return SDL3Error.GPUInteraction;
     };
 
-    std.log.debug("Acquiring command buffer from SDL3 GPU OK", .{});
+    std.log.debug("{s} OK", .{str});
     return command_buffer;
 }
 
