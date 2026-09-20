@@ -6,6 +6,13 @@ Build the apps with `zig build`, then start the GUI with:
 ./zig-out/bin/patcher
 ```
 
+For automation, run the same continuous frame loop against an offscreen GPU
+texture, without creating a window:
+
+```sh
+./zig-out/bin/patcher --headless
+```
+
 Control the running app through UDP IPC with `./zig-out/bin/patcher-ctl`. Run
 `./zig-out/bin/patcher-ctl help` for the complete command list. Common commands:
 

@@ -1096,10 +1096,11 @@ pub const ProgramSettings = struct {
     enable_gpu_debug: bool,
     window_w: u32,
     window_h: u32,
+    headless: bool = false,
 };
 
-/// Helper struct typing dimensions to an SDL swapchain texture
-const SwapchainTexture = struct {
+/// A texture and its dimensions for one rendered frame.
+const RenderTarget = struct {
     tex: *sdl.SDL_GPUTexture,
     w: u32,
     h: u32,
@@ -1339,7 +1340,7 @@ fn SDL3EndGPURenderPass(
 fn SDL3AcquireGPUSwapchainTextureBlocking(
     command_buffer: *sdl.SDL_GPUCommandBuffer,
     window: *sdl.SDL_Window,
-) SDL3Error!?SwapchainTexture {
+) SDL3Error!?RenderTarget {
     const str = "Acquiring SDL3 GPU swapchain texture";
     std.log.debug("{s}...", .{str});
     errdefer std.log.err("{s} failed: '{s}'", .{ str, sdl.SDL_GetError() });
@@ -1359,7 +1360,7 @@ fn SDL3AcquireGPUSwapchainTextureBlocking(
 
     if (texture) |tex| {
         std.log.debug("{s} OK", .{str});
-        return SwapchainTexture{
+        return RenderTarget{
             .tex = tex,
             .w = w,
             .h = h,
@@ -1429,7 +1430,7 @@ fn SDL3GPUDestroyShader(device: *sdl.SDL_GPUDevice, shader: *sdl.SDL_GPUShader) 
 /// Create an SDL3 graphics pipeline
 fn SDL3GPUCreateGraphicsPipeline(
     device: *sdl.SDL_GPUDevice,
-    window: *sdl.SDL_Window,
+    target_format: sdl.SDL_GPUTextureFormat,
     vert: *sdl.SDL_GPUShader,
     frag: *sdl.SDL_GPUShader,
     vertex_input_state: sdl.SDL_GPUVertexInputState,
@@ -1453,7 +1454,7 @@ fn SDL3GPUCreateGraphicsPipeline(
 
     const color_targets = [_]sdl.SDL_GPUColorTargetDescription{
         sdl.SDL_GPUColorTargetDescription{
-            .format = sdl.SDL_GetGPUSwapchainTextureFormat(device, window),
+            .format = target_format,
             .blend_state = blend_state,
         },
     };
@@ -1886,11 +1887,35 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     const device = try SDL3CreateGPUDevice(settings.shader_format, settings.enable_gpu_debug);
     defer SDL3DestroyGPUDevice(device);
 
-    const window = try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
-    defer SDL3DestroyWindow(window);
+    const window = if (settings.headless)
+        null
+    else
+        try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
+    defer if (window) |value| SDL3DestroyWindow(value);
 
-    try SDL3GPUClaimWindow(device, window);
-    defer SDL3GPUDestroyWindow(device, window);
+    if (window) |value| try SDL3GPUClaimWindow(device, value);
+    defer if (window) |value| SDL3GPUDestroyWindow(device, value);
+
+    const target_format = if (window) |value|
+        sdl.SDL_GetGPUSwapchainTextureFormat(device, value)
+    else
+        sdl.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+    const headless_texture = if (settings.headless)
+        sdl.SDL_CreateGPUTexture(device, &sdl.SDL_GPUTextureCreateInfo{
+            .type = sdl.SDL_GPU_TEXTURETYPE_2D,
+            .format = target_format,
+            .usage = sdl.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
+            .width = settings.window_w,
+            .height = settings.window_h,
+            .layer_count_or_depth = 1,
+            .num_levels = 1,
+            .sample_count = sdl.SDL_GPU_SAMPLECOUNT_1,
+            .props = 0,
+        }) orelse return error.CreateTextureFailed
+    else
+        null;
+    defer if (headless_texture) |texture| SDL3GPUDestroyTexture(device, texture);
 
     // Setup canvas pipeline
     const canvas_vert = try SDL3GPUCreateShader(device, CanvasVert);
@@ -1901,7 +1926,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
     const canvas_pipeline = try SDL3GPUCreateGraphicsPipeline(
         device,
-        window,
+        target_format,
         canvas_vert,
         canvas_frag,
         std.mem.zeroes(sdl.SDL_GPUVertexInputState),
@@ -1920,7 +1945,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
     const quad_pipeline = try SDL3GPUCreateGraphicsPipeline(
         device,
-        window,
+        target_format,
         quad_vert,
         quad_frag,
         std.mem.zeroes(sdl.SDL_GPUVertexInputState),
@@ -1948,7 +1973,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
     const node_pipeline = try SDL3GPUCreateGraphicsPipeline(
         device,
-        window,
+        target_format,
         node_vert,
         node_frag,
         std.mem.zeroes(sdl.SDL_GPUVertexInputState),
@@ -2012,7 +2037,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
     const glyph_pipeline = try SDL3GPUCreateGraphicsPipeline(
         device,
-        window,
+        target_format,
         glyph_vert,
         glyph_frag,
         std.mem.zeroes(sdl.SDL_GPUVertexInputState),
@@ -2244,12 +2269,19 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
         const command_buffer = try SDL3AcquireGPUCommandBuffer(device);
 
-        const swapchain_texture = try SDL3AcquireGPUSwapchainTextureBlocking(command_buffer, window) orelse {
-            try SDL3SubmitGPUCommandBuffer(command_buffer);
-            continue;
-        };
+        const render_target = if (window) |value|
+            try SDL3AcquireGPUSwapchainTextureBlocking(command_buffer, value) orelse {
+                try SDL3SubmitGPUCommandBuffer(command_buffer);
+                continue;
+            }
+        else
+            RenderTarget{
+                .tex = headless_texture.?,
+                .w = settings.window_w,
+                .h = settings.window_h,
+            };
 
-        const projection_ubo = ProjectionMatrixUniform.screen(swapchain_texture.w, swapchain_texture.h);
+        const projection_ubo = ProjectionMatrixUniform.screen(render_target.w, render_target.h);
 
         if (interface.dirty) {
             quad_count = 0;
@@ -2287,13 +2319,13 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
             interface.dirty = false;
         }
 
-        const color_target_infos = SDL3GPUColorTargetInfos(swapchain_texture.tex);
+        const color_target_infos = SDL3GPUColorTargetInfos(render_target.tex);
         const render_pass = try SDL3BeginGPURenderPass(command_buffer, &color_target_infos, null);
 
         // canvas
         {
-            const w: f32 = @floatFromInt(swapchain_texture.w);
-            const h: f32 = @floatFromInt(swapchain_texture.h);
+            const w: f32 = @floatFromInt(render_target.w);
+            const h: f32 = @floatFromInt(render_target.h);
             const bounds = interface.canvas.bounding_box;
 
             if (bounds[2] > 0.0 and bounds[3] > 0.0) {
@@ -2311,8 +2343,8 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
         // nodes
         {
-            const w: f32 = @floatFromInt(swapchain_texture.w);
-            const h: f32 = @floatFromInt(swapchain_texture.h);
+            const w: f32 = @floatFromInt(render_target.w);
+            const h: f32 = @floatFromInt(render_target.h);
             const bounds = interface.canvas.bounding_box;
 
             if (bounds[2] > 0.0 and bounds[3] > 0.0) {
@@ -2367,8 +2399,8 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
             SDL3GPUDraw(render_pass, GlyphInstance.VertexCount, mono_glyph_count);
 
             // console
-            const w: f32 = @floatFromInt(swapchain_texture.w);
-            const h: f32 = @floatFromInt(swapchain_texture.h);
+            const w: f32 = @floatFromInt(render_target.w);
+            const h: f32 = @floatFromInt(render_target.h);
             const bounds = interface.console.bounding_box;
 
             SDL3GPUPushFragmentUniformData(command_buffer, 0, std.mem.asBytes(&console_glyph_ubo));
@@ -2404,10 +2436,10 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
             try SDL3SaveGPUTextureBMP(
                 device,
                 command_buffer,
-                swapchain_texture.tex,
-                sdl.SDL_GetGPUSwapchainTextureFormat(device, window),
-                swapchain_texture.w,
-                swapchain_texture.h,
+                render_target.tex,
+                target_format,
+                render_target.w,
+                render_target.h,
                 path_z,
             );
 

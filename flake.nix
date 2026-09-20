@@ -98,6 +98,7 @@
           pkgs.vulkan-validation-layers
           pkgs.shaderc
           pkgs.msdf-atlas-gen
+          pkgs.imagemagick
         ];
       in
       {
