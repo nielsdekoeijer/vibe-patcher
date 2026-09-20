@@ -204,9 +204,9 @@ const FontModule = struct {
         command.addArg("-format");
         command.addArg(b.fmt("bin", .{}));
         command.addArg("-pxrange");
-        command.addArg(b.fmt("4", .{}));
+        command.addArg(b.fmt("8", .{}));
         command.addArg("-size");
-        command.addArg(b.fmt("{}", .{entry.pixels_per_em}));
+        command.addArg(b.fmt("{}", .{entry.atlas_pixels_per_em}));
 
         command.addArg("-imageout");
         const data = command.addOutputFileArg(b.fmt("{s}.bin", .{import_name}));
@@ -229,9 +229,10 @@ const FontModule = struct {
                 \\
                 \\pub const font = lib.Font{{
                 \\    .data = &data,
+                \\    .pixels_per_em = {d},
                 \\    .config = @import("config"),
                 \\}};
-            , .{}),
+            , .{entry.pixels_per_em}),
         );
 
         const module = b.createModule(.{ .root_source_file = zig_file_path });
@@ -247,6 +248,7 @@ const FontModule = struct {
             self.appendFontModule(b, m, b.fmt("{s}", .{field.name}), FontDescription{
                 .path = entry.path,
                 .pixels_per_em = entry.pixels_per_em,
+                .atlas_pixels_per_em = entry.atlas_pixels_per_em,
             });
         }
     }

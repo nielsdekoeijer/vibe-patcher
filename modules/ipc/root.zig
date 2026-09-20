@@ -16,7 +16,9 @@ pub const MouseButton = enum(u8) {
 
 pub const Command = union(CommandTag) {
     Quit: struct {},
-    Screenshot: struct {},
+    Screenshot: struct {
+        path: []const u8,
+    },
     MousePress: struct {
         x: f32,
         y: f32,
@@ -79,7 +81,7 @@ pub const Server = struct {
         const slice = buffer[0..message.data.len :0];
 
         return .{
-            .command = try std.zon.parse.fromSlice(Command, allocator, slice, null, .{}),
+            .command = try std.zon.parse.fromSliceAlloc(Command, allocator, slice, null, .{}),
             .from = message.from,
         };
     }

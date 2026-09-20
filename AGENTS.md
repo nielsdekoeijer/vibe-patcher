@@ -20,7 +20,7 @@ Control the running app through UDP IPC with `./zig-out/bin/patcher-ctl`. Run
 Every command prints its response as ZON. Capture the current window with:
 
 ```sh
-./zig-out/bin/patcher-ctl screenshot
+./zig-out/bin/patcher-ctl screenshot /tmp/vibe-patcher-screenshot.bmp
 ```
 
 The response contains the path `/tmp/vibe-patcher-screenshot.bmp`. If an image

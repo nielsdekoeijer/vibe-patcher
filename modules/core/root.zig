@@ -261,7 +261,7 @@ pub const GlyphUniform = extern struct {
         return GlyphUniform{
             .aem_range = configuration.aem_range,
             .threshold_em = 0.0,
-            .antialias_per_em = configuration.pixels_per_em,
+            .antialias_per_em = configuration.atlas_pixels_per_em,
         };
     }
 };
@@ -275,12 +275,12 @@ pub const GlyphInstance = extern struct {
     color: [4]f32,
 
     pub fn init(
-        comptime config: font_module.FontConfiguration,
+        comptime font: font_module.Font,
         char: u8,
         pos: *[2]f32,
         color: [4]f32,
     ) ?GlyphInstance {
-        const glyph = &font_module.FontAtlas(config).CharacterGlyphs[char];
+        const glyph = &font_module.FontAtlas(font).CharacterGlyphs[char];
 
         const glyph_x = pos[0];
         pos[0] += glyph.x_advance;
@@ -302,7 +302,7 @@ pub const GlyphInstance = extern struct {
     }
 
     pub fn text(
-        comptime config: font_module.FontConfiguration,
+        comptime font: font_module.Font,
         string: []const u8,
         cursor: *[2]f32,
         color: [4]f32,
@@ -311,7 +311,7 @@ pub const GlyphInstance = extern struct {
         var index: usize = 0;
 
         for (string) |char| {
-            if (GlyphInstance.init(config, char, cursor, color)) |glyph| {
+            if (GlyphInstance.init(font, char, cursor, color)) |glyph| {
                 if (index == out.len) return index;
 
                 out[index] = glyph;
@@ -324,13 +324,13 @@ pub const GlyphInstance = extern struct {
     }
 
     pub fn rect(
-        comptime config: font_module.FontConfiguration,
+        comptime font: font_module.Font,
         string: []const u8,
     ) [2]f32 {
         var cursor: [2]f32 = @splat(0);
 
         for (string) |char| {
-            const glyph = &font_module.FontAtlas(config).CharacterGlyphs[char];
+            const glyph = &font_module.FontAtlas(font).CharacterGlyphs[char];
 
             cursor[0] += glyph.x_advance;
 
@@ -462,12 +462,12 @@ pub const MenubarElement = struct {
         pub fn init(name: []const u8) Option {
             return .{
                 .name = name,
-                .rect = GlyphInstance.rect(DefaultFont.config, name),
+                .rect = GlyphInstance.rect(DefaultFont, name),
             };
         }
 
         pub fn append_glypths(self: Option, cursor: *[2]f32, out: []GlyphInstance) usize {
-            return GlyphInstance.text(DefaultFont.config, self.name, cursor, MenubarElement.TextColor, out);
+            return GlyphInstance.text(DefaultFont, self.name, cursor, MenubarElement.TextColor, out);
         }
     };
 
@@ -611,7 +611,7 @@ pub const ToolbarElement = struct {
 
         var buf: [5]u8 = undefined;
         const text = std.fmt.bufPrint(&buf, "{d:4}%", .{val}) catch return 0;
-        return GlyphInstance.text(MonoFont.config, text, &cursor, TextColor, out);
+        return GlyphInstance.text(MonoFont, text, &cursor, TextColor, out);
     }
 
     pub fn generate_quad_instances(self: ToolbarElement, quads: []QuadInstance) usize {
@@ -817,7 +817,7 @@ pub const ConsoleElement = struct {
             };
 
             count += GlyphInstance.text(
-                ConsoleFont.config,
+                ConsoleFont,
                 ">",
                 &cursor,
                 InputTextColor,
@@ -841,7 +841,7 @@ pub const ConsoleElement = struct {
             ) catch unreachable;
 
             count += GlyphInstance.text(
-                ConsoleFont.config,
+                ConsoleFont,
                 prefix,
                 &cursor,
                 TextColor,
@@ -849,7 +849,7 @@ pub const ConsoleElement = struct {
             );
 
             count += GlyphInstance.text(
-                ConsoleFont.config,
+                ConsoleFont,
                 buf.read_line(i),
                 &cursor,
                 TextColor,
@@ -1107,8 +1107,6 @@ const SwapchainTexture = struct {
 
 /// Name of our window
 const WindowName: [*:0]const u8 = "vibe-patcher";
-const ScreenshotPath: [:0]const u8 = "/tmp/vibe-patcher-screenshot.bmp";
-
 /// Our default clear color
 const ClearColorHex = hexColor("#D9DEE5", 1.0);
 const ClearColor: sdl.SDL_FColor = @bitCast(ClearColorHex);
@@ -1979,7 +1977,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     const default_glyph_w = DefaultFont.config.atlas.width;
     const default_glyph_h = DefaultFont.config.atlas.height;
     const default_glyph_data = DefaultFont.data;
-    const default_glyph_ubo = GlyphUniform.init(font_module.FontAtlas(DefaultFont.config));
+    const default_glyph_ubo = GlyphUniform.init(font_module.FontAtlas(DefaultFont));
 
     const default_glyph_texture = try SDL3GPUCreateTextureGlyph(device, default_glyph_w, default_glyph_h);
     defer SDL3GPUDestroyTexture(device, default_glyph_texture);
@@ -1988,7 +1986,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     const mono_glyph_w = MonoFont.config.atlas.width;
     const mono_glyph_h = MonoFont.config.atlas.height;
     const mono_glyph_data = MonoFont.data;
-    const mono_glyph_ubo = GlyphUniform.init(font_module.FontAtlas(MonoFont.config));
+    const mono_glyph_ubo = GlyphUniform.init(font_module.FontAtlas(MonoFont));
 
     const mono_glyph_texture = try SDL3GPUCreateTextureGlyph(device, mono_glyph_w, mono_glyph_h);
     defer SDL3GPUDestroyTexture(device, mono_glyph_texture);
@@ -1997,7 +1995,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     const console_glyph_w = ConsoleFont.config.atlas.width;
     const console_glyph_h = ConsoleFont.config.atlas.height;
     const console_glyph_data = ConsoleFont.data;
-    const console_glyph_ubo = GlyphUniform.init(font_module.FontAtlas(ConsoleFont.config));
+    const console_glyph_ubo = GlyphUniform.init(font_module.FontAtlas(ConsoleFont));
 
     const console_glyph_texture = try SDL3GPUCreateTextureGlyph(device, console_glyph_w, console_glyph_h);
     defer SDL3GPUDestroyTexture(device, console_glyph_texture);
@@ -2127,6 +2125,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
                 _ = sdl.SDL_PushEvent(&forwarded);
 
                 try server.respond(request, .{ .Ok = .{} });
+                ipc.Server.free(allocator, request);
 
                 future = io.async(SDL3ForwardIPCEvent, .{
                     allocator,
@@ -2391,6 +2390,17 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
         // Do deferred screenshot work
         if (pending_screenshot) |request| {
+            const path = switch (request.command) {
+                .Screenshot => |screenshot| screenshot.path,
+                else => unreachable,
+            };
+            if (path.len >= 4096) return error.NameTooLong;
+
+            var path_buffer: [4096:0]u8 = undefined;
+            @memcpy(path_buffer[0..path.len], path);
+            path_buffer[path.len] = 0;
+            const path_z = path_buffer[0..path.len :0];
+
             try SDL3SaveGPUTextureBMP(
                 device,
                 command_buffer,
@@ -2398,10 +2408,11 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
                 sdl.SDL_GetGPUSwapchainTextureFormat(device, window),
                 swapchain_texture.w,
                 swapchain_texture.h,
-                ScreenshotPath,
+                path_z,
             );
 
-            try server.respond(request, .{ .Screenshot = .{ .path = ScreenshotPath } });
+            try server.respond(request, .{ .Screenshot = .{ .path = path } });
+            ipc.Server.free(allocator, request);
 
             pending_screenshot = null;
 

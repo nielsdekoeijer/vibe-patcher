@@ -20,7 +20,7 @@ float screen_px_scale(vec2 uv) {
   vec2 atlas_size = vec2(textureSize(u_msdf_atlas, 0));
   vec2 gradient = fwidth(uv);
   vec2 product = atlas_size * gradient;
-  return max(0.5 * dot(atlas_size, gradient) / (product.x * product.y), 1.0);
+  return 0.5 * dot(atlas_size, gradient) / (product.x * product.y);
 }
 
 float median(vec3 rgb) {
@@ -30,7 +30,7 @@ float median(vec3 rgb) {
 void main() {
     float texel = median(texture(u_msdf_atlas, inp_glyph_uv).rgb);
     float distance_em = mix(u_config.aem_range[1], u_config.aem_range[0], texel);
-    float inverse_width = screen_px_scale(inp_glyph_uv) * u_config.antialias_per_em;
+    float inverse_width = max(screen_px_scale(inp_glyph_uv) * u_config.antialias_per_em, 1.0);
     float opacity = clamp((u_config.threshold_em - distance_em) * inverse_width + 0.5, 0.0, 1.0);
 
     out_glyph_color = vec4(

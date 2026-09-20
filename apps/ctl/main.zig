@@ -6,7 +6,7 @@ const usage =
     \\
     \\Commands:
     \\  quit
-    \\  screenshot
+    \\  screenshot <path.bmp>
     \\  mouse-press <x> <y> <left|middle|right> <down|up>
     \\  mouse-move <x> <y> <xrel> <yrel>
     \\  key-press <key> <down|up>
@@ -37,8 +37,8 @@ fn parseCommand(args: []const [:0]const u8) !ipc.Command {
     }
 
     if (std.mem.eql(u8, command, "screenshot")) {
-        if (args.len != 2) return error.InvalidArguments;
-        return .{ .Screenshot = .{} };
+        if (args.len != 3) return error.InvalidArguments;
+        return .{ .Screenshot = .{ .path = args[2] } };
     }
 
     if (std.mem.eql(u8, command, "mouse-press")) {

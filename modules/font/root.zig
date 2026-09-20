@@ -6,6 +6,9 @@ pub const FontDescription = struct {
 
     /// How to map to pixels from em
     pixels_per_em: usize,
+
+    /// Resolution used to generate the distance-field atlas.
+    atlas_pixels_per_em: usize,
 };
 
 /// Used for serializing and deserializing the font atlas zon file
@@ -113,9 +116,10 @@ pub const FontAtlasGlypth = struct {
     x_advance: f32,
 };
 
-pub fn FontAtlas(comptime configuration: FontConfiguration) type {
+pub fn FontAtlas(comptime font: Font) type {
     return struct {
-        pub const pixels_per_em = configuration.atlas.size;
+        const configuration = font.config;
+        pub const atlas_pixels_per_em = configuration.atlas.size;
         pub const aem_range = [_]f32{
             (configuration.atlas.distanceRangeMiddle - configuration.atlas.distanceRange / 2) / configuration.atlas.size,
             (configuration.atlas.distanceRangeMiddle + configuration.atlas.distanceRange / 2) / configuration.atlas.size,
@@ -134,13 +138,13 @@ pub fn FontAtlas(comptime configuration: FontConfiguration) type {
                 atlas[glyph.unicode] = inner: {
                     if (glyph.planeBounds == null or glyph.atlasBounds == null) {
                         break :inner FontAtlasGlypth{
-                            .x_advance = glyph.advance * pixels_per_em,
+                            .x_advance = glyph.advance * font.pixels_per_em,
                             .quad = null,
                         };
                     }
 
                     break :inner FontAtlasGlypth{
-                        .x_advance = glyph.advance * pixels_per_em,
+                        .x_advance = glyph.advance * font.pixels_per_em,
                         .quad = .{
                             .uv = .{
                                 glyph.atlasBounds.?.left / configuration.atlas.width,
@@ -149,10 +153,10 @@ pub fn FontAtlas(comptime configuration: FontConfiguration) type {
                                 glyph.atlasBounds.?.bottom / configuration.atlas.height,
                             },
                             .shape = .{
-                                glyph.planeBounds.?.left * pixels_per_em,
-                                glyph.planeBounds.?.top * pixels_per_em,
-                                (glyph.planeBounds.?.right - glyph.planeBounds.?.left) * pixels_per_em,
-                                (glyph.planeBounds.?.top - glyph.planeBounds.?.bottom) * pixels_per_em,
+                                glyph.planeBounds.?.left * font.pixels_per_em,
+                                glyph.planeBounds.?.top * font.pixels_per_em,
+                                (glyph.planeBounds.?.right - glyph.planeBounds.?.left) * font.pixels_per_em,
+                                (glyph.planeBounds.?.top - glyph.planeBounds.?.bottom) * font.pixels_per_em,
                             },
                         },
                     };
@@ -167,6 +171,9 @@ pub fn FontAtlas(comptime configuration: FontConfiguration) type {
 pub const Font = struct {
     /// Raw atlas image bytes in the channel layout selected during generation.
     data: []const u8,
+
+    /// On-screen layout size, independent from the atlas resolution.
+    pixels_per_em: f32,
 
     /// Generated atlas, font-metric, and per-glyph metadata describing data.
     config: FontConfiguration,
