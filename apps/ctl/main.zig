@@ -8,9 +8,11 @@ const usage =
     \\  quit
     \\  screenshot <path.bmp>
     \\  mouse-press <x> <y> <left|middle|right> <down|up>
+    \\  mouse-click <x> <y> <left|middle|right> [count]
     \\  mouse-move <x> <y> <xrel> <yrel>
     \\  scroll <x> <y>
     \\  key-press <key> <down|up>
+    \\  resize <width> <height>
     \\  help
     \\
 ;
@@ -52,6 +54,18 @@ fn parseCommand(args: []const [:0]const u8) !ipc.Command {
         } };
     }
 
+    if (std.mem.eql(u8, command, "mouse-click")) {
+        if (args.len != 5 and args.len != 6) return error.InvalidArguments;
+        const clicks = if (args.len == 6) try std.fmt.parseInt(u8, args[5], 10) else 1;
+        if (clicks == 0) return error.InvalidClickCount;
+        return .{ .MouseClick = .{
+            .x = try std.fmt.parseFloat(f32, args[2]),
+            .y = try std.fmt.parseFloat(f32, args[3]),
+            .button = try parseMouseButton(args[4]),
+            .clicks = clicks,
+        } };
+    }
+
     if (std.mem.eql(u8, command, "mouse-move")) {
         if (args.len != 6) return error.InvalidArguments;
         return .{ .MouseMove = .{
@@ -75,6 +89,17 @@ fn parseCommand(args: []const [:0]const u8) !ipc.Command {
         return .{ .KeyPress = .{
             .key = try std.fmt.parseInt(u32, args[2], 0),
             .down = try parseDirection(args[3]),
+        } };
+    }
+
+    if (std.mem.eql(u8, command, "resize")) {
+        if (args.len != 4) return error.InvalidArguments;
+        const width = try std.fmt.parseInt(u16, args[2], 10);
+        const height = try std.fmt.parseInt(u16, args[3], 10);
+        if (width == 0 or height == 0) return error.InvalidWindowSize;
+        return .{ .Resize = .{
+            .width = width,
+            .height = height,
         } };
     }
 

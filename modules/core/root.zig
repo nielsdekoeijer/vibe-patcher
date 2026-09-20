@@ -2146,6 +2146,24 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
                         forwarded.button.down = m.down;
                     },
 
+                    .MouseClick => |m| {
+                        forwarded.button.type = sdl.SDL_EVENT_MOUSE_BUTTON_DOWN;
+                        forwarded.button.x = m.x;
+                        forwarded.button.y = m.y;
+                        forwarded.button.button = switch (m.button) {
+                            .Left => sdl.SDL_BUTTON_LEFT,
+                            .Middle => sdl.SDL_BUTTON_MIDDLE,
+                            .Right => sdl.SDL_BUTTON_RIGHT,
+                        };
+                        forwarded.button.down = true;
+                        forwarded.button.clicks = m.clicks;
+
+                        _ = sdl.SDL_PushEvent(&forwarded);
+
+                        forwarded.button.type = sdl.SDL_EVENT_MOUSE_BUTTON_UP;
+                        forwarded.button.down = false;
+                    },
+
                     .MouseMove => |m| {
                         forwarded.motion.type = sdl.SDL_EVENT_MOUSE_MOTION;
                         forwarded.motion.x = m.x;
@@ -2169,6 +2187,12 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
                         forwarded.key.key = @intCast(k.key);
                         forwarded.key.down = k.down;
+                    },
+
+                    .Resize => |resize| {
+                        forwarded.window.type = sdl.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED;
+                        forwarded.window.data1 = @intCast(resize.width);
+                        forwarded.window.data2 = @intCast(resize.height);
                     },
                 }
 

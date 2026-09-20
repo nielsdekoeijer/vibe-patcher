@@ -4,9 +4,11 @@ pub const CommandTag = enum(u16) {
     Quit,
     Screenshot,
     MousePress,
+    MouseClick,
     MouseMove,
     Scroll,
     KeyPress,
+    Resize,
 };
 
 pub const MouseButton = enum(u8) {
@@ -26,6 +28,12 @@ pub const Command = union(CommandTag) {
         button: MouseButton,
         down: bool,
     },
+    MouseClick: struct {
+        x: f32,
+        y: f32,
+        button: MouseButton,
+        clicks: u8 = 1,
+    },
     MouseMove: struct {
         x: f32,
         y: f32,
@@ -39,6 +47,10 @@ pub const Command = union(CommandTag) {
     KeyPress: struct {
         key: u32,
         down: bool,
+    },
+    Resize: struct {
+        width: u16,
+        height: u16,
     },
 };
 
