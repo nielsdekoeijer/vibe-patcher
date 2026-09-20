@@ -26,19 +26,24 @@ layout(location = 7) flat out float out_node_outlet_count;
 void main() {
     Node q = nodes[gl_InstanceIndex];
 
-    // NOTE: this is a smart optimization that AI came up with. We draw in multiples of 4, and essentially we can 
-    // exploit this fact to get the corder
+    // Obtains: [(0,0), (1,0), (0,1), (1,1)]
     vec2 corner = vec2(gl_VertexIndex & 1, (gl_VertexIndex >> 1) & 1);
 
-    // Our position
+    // Shape corners from our input dimensions
     vec2 pos = q.shape.xy + corner * q.shape.zw;
 
+    // Project world, typically orthonormal
     gl_Position = projectionMatrix * vec4(pos, 0.0, 1.0);
 
+    // Obtains: (w, h) * [(-0.5, -0.5), (0.5, -0.5), (-0.5, 0.5), (0.5, 0.5)]
+    // Can be understood as: steps needed to go from the center to the edge
     out_node_center_position = (corner - 0.5) * q.shape.zw;
+
+    // We pass this so we can 
+    out_node_size = q.shape.zw;
+
     out_node_inner_color = q.inner_color;
     out_node_outer_color = q.outer_color;
-    out_node_size = q.shape.zw;
     out_node_rounding = q.rounding;
     out_node_border_width = q.border_width_px;
     out_node_inplet_count = q.inplet_count;

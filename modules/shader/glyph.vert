@@ -4,6 +4,7 @@
 
 struct Glyph { vec4 shape; vec4 uv; vec4 color; };
 
+// TODO: vertex pulling is what we want to do
 layout(std430, set = 0, binding = 0) readonly buffer Glyphs { Glyph glyphs[]; };
 layout(std140, set = 1, binding = 0) uniform Camera { mat4 projectionMatrix; };
 

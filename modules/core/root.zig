@@ -2097,13 +2097,13 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
 
             node_count = 0;
             node_scratch[node_count] = NodeInstance.init(
-                .{ 80.0, 80.0, 240.0, 140.0 },
+                .{ 80.0, 80.0, 240.0, 70.0 },
                 hexColor("#25344A", 1.0),
                 hexColor("#60A5FA", 1.0),
                 20.0,
-                3.0,
-                0.0,
-                0.0,
+                2.0,
+                2.0,
+                1.0,
             );
             node_count += 1;
             try SDL3GPUBufferUpload(device, node_buffer, std.mem.sliceAsBytes(node_scratch[0..node_count]));
