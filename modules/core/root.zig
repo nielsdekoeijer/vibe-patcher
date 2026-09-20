@@ -1107,6 +1107,7 @@ const SwapchainTexture = struct {
 
 /// Name of our window
 const WindowName: [*:0]const u8 = "vibe-patcher";
+const ScreenshotPath: [:0]const u8 = "/tmp/vibe-patcher-screenshot.bmp";
 
 /// Our default clear color
 const ClearColorHex = hexColor("#D9DEE5", 1.0);
@@ -1217,6 +1218,72 @@ fn SDL3SubmitGPUCommandBuffer(command_buffer: *sdl.SDL_GPUCommandBuffer) SDL3Err
     }
 
     std.log.debug("{s} OK", .{str});
+}
+
+fn SDL3SaveGPUTextureBMP(
+    device: *sdl.SDL_GPUDevice,
+    command_buffer: *sdl.SDL_GPUCommandBuffer,
+    texture: *sdl.SDL_GPUTexture,
+    format: sdl.SDL_GPUTextureFormat,
+    w: u32,
+    h: u32,
+    path: [:0]const u8,
+) SDL3Error!void {
+    const byte_size = sdl.SDL_CalculateGPUTextureFormatSize(format, w, h, 1);
+    const bytes_per_pixel = sdl.SDL_GPUTextureFormatTexelBlockSize(format);
+
+    const transfer = sdl.SDL_CreateGPUTransferBuffer(device, &sdl.SDL_GPUTransferBufferCreateInfo{
+        .usage = sdl.SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
+        .size = byte_size,
+        .props = 0,
+    }) orelse return SDL3Error.GPUInteraction;
+    defer sdl.SDL_ReleaseGPUTransferBuffer(device, transfer);
+
+    const copy_pass = sdl.SDL_BeginGPUCopyPass(command_buffer) orelse return SDL3Error.GPUInteraction;
+    sdl.SDL_DownloadFromGPUTexture(
+        copy_pass,
+        &sdl.SDL_GPUTextureRegion{
+            .texture = texture,
+            .mip_level = 0,
+            .layer = 0,
+            .x = 0,
+            .y = 0,
+            .z = 0,
+            .w = w,
+            .h = h,
+            .d = 1,
+        },
+        &sdl.SDL_GPUTextureTransferInfo{
+            .transfer_buffer = transfer,
+            .offset = 0,
+            .pixels_per_row = w,
+            .rows_per_layer = h,
+        },
+    );
+    sdl.SDL_EndGPUCopyPass(copy_pass);
+
+    const fence = sdl.SDL_SubmitGPUCommandBufferAndAcquireFence(command_buffer) orelse
+        return SDL3Error.GPUInteraction;
+    defer sdl.SDL_ReleaseGPUFence(device, fence);
+
+    const fences = [_]?*sdl.SDL_GPUFence{fence};
+    if (!sdl.SDL_WaitForGPUFences(device, true, &fences, fences.len))
+        return SDL3Error.GPUInteraction;
+
+    const pixels = sdl.SDL_MapGPUTransferBuffer(device, transfer, false) orelse
+        return SDL3Error.GPUInteraction;
+    defer sdl.SDL_UnmapGPUTransferBuffer(device, transfer);
+
+    const surface = sdl.SDL_CreateSurfaceFrom(
+        @intCast(w),
+        @intCast(h),
+        sdl.SDL_GetPixelFormatFromGPUTextureFormat(format),
+        pixels,
+        @intCast(w * bytes_per_pixel),
+    ) orelse return SDL3Error.UnexpectedNullPointer;
+    defer sdl.SDL_DestroySurface(surface);
+
+    if (!sdl.SDL_SaveBMP(surface, path.ptr)) return SDL3Error.GPUInteraction;
 }
 
 fn SDL3GPUColorTargetInfos(texture: *sdl.SDL_GPUTexture) [1]sdl.SDL_GPUColorTargetInfo {
@@ -1997,11 +2064,20 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     var future = io.async(SDL3ForwardIPCEvent, .{ allocator, &server, ipc_event });
     defer _ = future.cancel(io) catch {};
 
+    var pending_screenshot: ?ipc.Request = null;
     var should_run = true;
     while (should_run) {
         while (SDL3PollEvent()) |event| {
             if (event.type == ipc_event) {
                 const request = try future.await(io);
+
+                switch (request.command) {
+                    .Screenshot => {
+                        pending_screenshot = request;
+                        continue;
+                    },
+                    else => {},
+                }
 
                 var forwarded = std.mem.zeroes(sdl.SDL_Event);
 
@@ -2009,6 +2085,9 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
                     .Quit => {
                         forwarded.type = sdl.SDL_EVENT_QUIT;
                     },
+
+                    // should never happen
+                    .Screenshot => unreachable,
 
                     .MousePress => |m| {
                         forwarded.button.type = if (m.down)
@@ -2018,8 +2097,20 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
                         forwarded.button.x = m.x;
                         forwarded.button.y = m.y;
-                        forwarded.button.button = sdl.SDL_BUTTON_LEFT;
+                        forwarded.button.button = switch (m.button) {
+                            .Left => sdl.SDL_BUTTON_LEFT,
+                            .Middle => sdl.SDL_BUTTON_MIDDLE,
+                            .Right => sdl.SDL_BUTTON_RIGHT,
+                        };
                         forwarded.button.down = m.down;
+                    },
+
+                    .MouseMove => |m| {
+                        forwarded.motion.type = sdl.SDL_EVENT_MOUSE_MOTION;
+                        forwarded.motion.x = m.x;
+                        forwarded.motion.y = m.y;
+                        forwarded.motion.xrel = m.xrel;
+                        forwarded.motion.yrel = m.yrel;
                     },
 
                     .KeyPress => |k| {
@@ -2148,8 +2239,6 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
                 else => {},
             }
-
-            continue;
         }
 
         if (!should_run) break;
@@ -2300,6 +2389,29 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
         SDL3EndGPURenderPass(render_pass);
 
-        try SDL3SubmitGPUCommandBuffer(command_buffer);
+        // Do deferred screenshot work
+        if (pending_screenshot) |request| {
+            try SDL3SaveGPUTextureBMP(
+                device,
+                command_buffer,
+                swapchain_texture.tex,
+                sdl.SDL_GetGPUSwapchainTextureFormat(device, window),
+                swapchain_texture.w,
+                swapchain_texture.h,
+                ScreenshotPath,
+            );
+
+            try server.respond(request, .{ .Screenshot = .{ .path = ScreenshotPath } });
+
+            pending_screenshot = null;
+
+            future = io.async(SDL3ForwardIPCEvent, .{
+                allocator,
+                &server,
+                ipc_event,
+            });
+        } else {
+            try SDL3SubmitGPUCommandBuffer(command_buffer);
+        }
     }
 }

@@ -2,16 +2,32 @@ const std = @import("std");
 
 pub const CommandTag = enum(u16) {
     Quit,
+    Screenshot,
     MousePress,
+    MouseMove,
     KeyPress,
+};
+
+pub const MouseButton = enum(u8) {
+    Left,
+    Middle,
+    Right,
 };
 
 pub const Command = union(CommandTag) {
     Quit: struct {},
+    Screenshot: struct {},
     MousePress: struct {
         x: f32,
         y: f32,
+        button: MouseButton,
         down: bool,
+    },
+    MouseMove: struct {
+        x: f32,
+        y: f32,
+        xrel: f32,
+        yrel: f32,
     },
     KeyPress: struct {
         key: u32,
@@ -26,10 +42,14 @@ pub const Request = struct {
 
 pub const ResponseTag = enum(u16) {
     Ok,
+    Screenshot,
 };
 
 pub const Response = union(ResponseTag) {
     Ok: struct {},
+    Screenshot: struct {
+        path: []const u8,
+    },
 };
 
 pub const Server = struct {
@@ -123,7 +143,7 @@ pub const Client = struct {
             buffer[message.data.len] = 0;
             const slice = buffer[0..message.data.len :0];
 
-            return try std.zon.parse.fromSlice(Response, allocator, slice, null, .{});
+            return try std.zon.parse.fromSliceAlloc(Response, allocator, slice, null, .{});
         }
     }
 };
