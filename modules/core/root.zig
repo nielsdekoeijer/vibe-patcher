@@ -1096,7 +1096,8 @@ pub const ProgramSettings = struct {
     enable_gpu_debug: bool,
     window_w: u32,
     window_h: u32,
-    headless: bool = false,
+    enable_headless: bool = false,
+    enable_ipc: bool = false,
 };
 
 /// A texture and its dimensions for one rendered frame.
@@ -1890,7 +1891,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     const device = try SDL3CreateGPUDevice(settings.shader_format, settings.enable_gpu_debug);
     defer SDL3DestroyGPUDevice(device);
 
-    const window = if (settings.headless)
+    const window = if (settings.enable_headless)
         null
     else
         try SDL3CreateWindow(WindowName, settings.window_w, settings.window_h);
@@ -1904,7 +1905,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     else
         sdl.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
 
-    const headless_texture = if (settings.headless)
+    const headless_texture = if (settings.enable_headless)
         sdl.SDL_CreateGPUTexture(device, &sdl.SDL_GPUTextureCreateInfo{
             .type = sdl.SDL_GPU_TEXTURETYPE_2D,
             .format = target_format,
@@ -2084,11 +2085,24 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     const ipc_event = sdl.SDL_RegisterEvents(1);
 
     // Start ipc server...
-    var server = try ipc.Server.init(io, .{ .ip4 = std.Io.net.Ip4Address.loopback(9999) });
-    defer server.deinit();
+    var server: ?ipc.Server = null;
+    const IPCFuture = std.Io.Future(
+        @typeInfo(@TypeOf(SDL3ForwardIPCEvent)).@"fn".return_type.?,
+    );
+    var future: ?IPCFuture = null;
 
-    var future = io.async(SDL3ForwardIPCEvent, .{ allocator, &server, ipc_event });
-    defer _ = future.cancel(io) catch {};
+    if (settings.enable_ipc) {
+        server = try ipc.Server.init(io, .{ .ip4 = std.Io.net.Ip4Address.loopback(9999) });
+
+        future = io.async(SDL3ForwardIPCEvent, .{ allocator, &server.?, ipc_event });
+    }
+
+    defer {
+        if (settings.enable_ipc) {
+            server.?.deinit();
+            _ = future.?.cancel(io) catch {};
+        }
+    }
 
     var pending_screenshot: ?ipc.Request = null;
     var should_run = true;
@@ -2096,7 +2110,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
         while (SDL3PollEvent()) |event| {
             // Handle IPC event as its not possible to be in a switch statement (runtime value)
             if (event.type == ipc_event) {
-                const request = try future.await(io);
+                const request = try future.?.await(io);
 
                 switch (request.command) {
                     .Screenshot => {
@@ -2160,12 +2174,12 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
 
                 _ = sdl.SDL_PushEvent(&forwarded);
 
-                try server.respond(request, .{ .Ok = .{} });
+                try server.?.respond(request, .{ .Ok = .{} });
                 ipc.Server.free(allocator, request);
 
                 future = io.async(SDL3ForwardIPCEvent, .{
                     allocator,
-                    &server,
+                    &server.?,
                     ipc_event,
                 });
 
@@ -2454,14 +2468,14 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
                 path_z,
             );
 
-            try server.respond(request, .{ .Screenshot = .{ .path = path } });
+            try server.?.respond(request, .{ .Screenshot = .{ .path = path } });
             ipc.Server.free(allocator, request);
 
             pending_screenshot = null;
 
             future = io.async(SDL3ForwardIPCEvent, .{
                 allocator,
-                &server,
+                &server.?,
                 ipc_event,
             });
         } else {
