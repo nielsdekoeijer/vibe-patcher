@@ -21,6 +21,7 @@ Control the running app through UDP IPC with `./zig-out/bin/patcher-ctl`. Run
 ./zig-out/bin/patcher-ctl mouse-press 300 200 right down
 ./zig-out/bin/patcher-ctl mouse-move 350 225 50 25
 ./zig-out/bin/patcher-ctl mouse-press 350 225 right up
+./zig-out/bin/patcher-ctl scroll 0 -1
 ./zig-out/bin/patcher-ctl quit
 ```
 

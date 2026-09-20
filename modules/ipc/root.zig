@@ -5,6 +5,7 @@ pub const CommandTag = enum(u16) {
     Screenshot,
     MousePress,
     MouseMove,
+    Scroll,
     KeyPress,
 };
 
@@ -30,6 +31,10 @@ pub const Command = union(CommandTag) {
         y: f32,
         xrel: f32,
         yrel: f32,
+    },
+    Scroll: struct {
+        x: f32,
+        y: f32,
     },
     KeyPress: struct {
         key: u32,

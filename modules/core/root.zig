@@ -1859,6 +1859,9 @@ fn SDL3GPUDestroySampler(device: *sdl.SDL_GPUDevice, sampler: *sdl.SDL_GPUSample
     sdl.SDL_ReleaseGPUSampler(device, sampler);
 }
 
+/// Helper which forwards IPC events to be handled in our SDL3 event loop
+/// TODO: Our IPC mechanism is currently flawed, only 1 request is handled at a time
+/// Once evented IO lands in 0.17 or so we can switch to something less insane
 fn SDL3ForwardIPCEvent(
     allocator: std.mem.Allocator,
     server: *ipc.Server,
@@ -2077,12 +2080,12 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     var console_glyph_count: usize = 0;
     var console_glyph_scratch: [GlyphCapacity]GlyphInstance = undefined;
 
+    // Register the ipc event so that SDL can integrate into our event loop
+    const ipc_event = sdl.SDL_RegisterEvents(1);
+
     // Start ipc server...
-    // TODO: kind of trash, does evented work yet?
     var server = try ipc.Server.init(io, .{ .ip4 = std.Io.net.Ip4Address.loopback(9999) });
     defer server.deinit();
-
-    const ipc_event = sdl.SDL_RegisterEvents(1);
 
     var future = io.async(SDL3ForwardIPCEvent, .{ allocator, &server, ipc_event });
     defer _ = future.cancel(io) catch {};
@@ -2091,6 +2094,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     var should_run = true;
     while (should_run) {
         while (SDL3PollEvent()) |event| {
+            // Handle IPC event as its not possible to be in a switch statement (runtime value)
             if (event.type == ipc_event) {
                 const request = try future.await(io);
 
@@ -2134,6 +2138,13 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
                         forwarded.motion.y = m.y;
                         forwarded.motion.xrel = m.xrel;
                         forwarded.motion.yrel = m.yrel;
+                    },
+
+                    .Scroll => |scroll| {
+                        forwarded.wheel.type = sdl.SDL_EVENT_MOUSE_WHEEL;
+                        forwarded.wheel.x = scroll.x;
+                        forwarded.wheel.y = scroll.y;
+                        forwarded.wheel.direction = sdl.SDL_MOUSEWHEEL_NORMAL;
                     },
 
                     .KeyPress => |k| {

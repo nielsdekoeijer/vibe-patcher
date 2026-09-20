@@ -9,6 +9,7 @@ const usage =
     \\  screenshot <path.bmp>
     \\  mouse-press <x> <y> <left|middle|right> <down|up>
     \\  mouse-move <x> <y> <xrel> <yrel>
+    \\  scroll <x> <y>
     \\  key-press <key> <down|up>
     \\  help
     \\
@@ -58,6 +59,14 @@ fn parseCommand(args: []const [:0]const u8) !ipc.Command {
             .y = try std.fmt.parseFloat(f32, args[3]),
             .xrel = try std.fmt.parseFloat(f32, args[4]),
             .yrel = try std.fmt.parseFloat(f32, args[5]),
+        } };
+    }
+
+    if (std.mem.eql(u8, command, "scroll")) {
+        if (args.len != 4) return error.InvalidArguments;
+        return .{ .Scroll = .{
+            .x = try std.fmt.parseFloat(f32, args[2]),
+            .y = try std.fmt.parseFloat(f32, args[3]),
         } };
     }
 
