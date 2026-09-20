@@ -278,7 +278,7 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "vibe_patcher",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("modules/main.zig"),
+            .root_source_file = b.path("apps/patcher/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
