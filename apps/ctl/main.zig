@@ -8,7 +8,5 @@ pub fn main(init: std.process.Init) !void {
     var client = try ipc.Client.init(init.io, .{ .ip4 = client_ip });
     defer client.deinit();
 
-    _ = try client.send(init.gpa, .{ .ip4 = server_ip }, .{
-        .MousePress = .{ .down = true, .x = 100, .y = 100 },
-    });
+    _ = try client.send(init.gpa, .{ .ip4 = server_ip }, .{ .Quit = .{} });
 }

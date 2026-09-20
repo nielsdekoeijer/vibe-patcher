@@ -1,11 +1,13 @@
 const std = @import("std");
 
 pub const CommandTag = enum(u16) {
+    Quit,
     MousePress,
     KeyPress,
 };
 
 pub const Command = union(CommandTag) {
+    Quit: struct {},
     MousePress: struct {
         x: f32,
         y: f32,

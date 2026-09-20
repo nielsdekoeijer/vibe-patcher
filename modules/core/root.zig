@@ -1995,6 +1995,7 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
     const ipc_event = sdl.SDL_RegisterEvents(1);
 
     var future = io.async(SDL3ForwardIPCEvent, .{ allocator, &server, ipc_event });
+    defer _ = future.cancel(io) catch {};
 
     var should_run = true;
     while (should_run) {
@@ -2005,6 +2006,10 @@ pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) 
                 var forwarded = std.mem.zeroes(sdl.SDL_Event);
 
                 switch (request.command) {
+                    .Quit => {
+                        forwarded.type = sdl.SDL_EVENT_QUIT;
+                    },
+
                     .MousePress => |m| {
                         forwarded.button.type = if (m.down)
                             sdl.SDL_EVENT_MOUSE_BUTTON_DOWN
