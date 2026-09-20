@@ -252,12 +252,27 @@ const FontModule = struct {
     }
 };
 
+/// Helper wrapper around the ipc module.
+const IPCModule = struct {
+    module: *std.Build.Module,
+
+    pub fn init(b: *std.Build, target: std.Build.ResolvedTarget) IPCModule {
+        return IPCModule{
+            .module = b.addModule("ipc", .{
+                .root_source_file = b.path("modules/ipc/root.zig"),
+                .target = target,
+            }),
+        };
+    }
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const shader = ShaderModule.init(b, target);
     const font = FontModule.init(b, target);
+    const ipc = IPCModule.init(b, target);
 
     const core = b.addModule("core", .{
         .root_source_file = b.path("modules/core/root.zig"),
@@ -265,6 +280,7 @@ pub fn build(b: *std.Build) void {
     });
     core.addImport("shader", shader.module);
     core.addImport("font", font.module);
+    core.addImport("ipc", ipc.module);
 
     shader.appendManifest(b, core);
     font.appendManifest(b, core);
@@ -275,8 +291,33 @@ pub fn build(b: *std.Build) void {
     });
     core.addImport("sdl3", sdl.module("sdl3"));
 
-    const exe = b.addExecutable(.{
-        .name = "vibe_patcher",
+    const ctl_exe = b.addExecutable(.{
+        .name = "patcher-ctl",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("apps/ctl/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "ipc", .module = ipc.module },
+            },
+        }),
+    });
+
+    b.installArtifact(ctl_exe);
+
+    const ctl_step = b.step("ctl", "Run the app");
+
+    const ctl_cmd = b.addRunArtifact(ctl_exe);
+    ctl_step.dependOn(&ctl_cmd.step);
+
+    ctl_cmd.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| {
+        ctl_cmd.addArgs(args);
+    }
+
+    const patcher_exe = b.addExecutable(.{
+        .name = "patcher",
         .root_module = b.createModule(.{
             .root_source_file = b.path("apps/patcher/main.zig"),
             .target = target,
@@ -287,11 +328,11 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    b.installArtifact(exe);
+    b.installArtifact(patcher_exe);
 
     const run_step = b.step("run", "Run the app");
 
-    const run_cmd = b.addRunArtifact(exe);
+    const run_cmd = b.addRunArtifact(patcher_exe);
     run_step.dependOn(&run_cmd.step);
 
     run_cmd.step.dependOn(b.getInstallStep());
@@ -307,7 +348,7 @@ pub fn build(b: *std.Build) void {
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const exe_tests = b.addTest(.{
-        .root_module = exe.root_module,
+        .root_module = patcher_exe.root_module,
     });
 
     const run_exe_tests = b.addRunArtifact(exe_tests);

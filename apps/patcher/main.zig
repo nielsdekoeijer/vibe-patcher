@@ -7,8 +7,6 @@ pub const std_options = std.Options{
 };
 
 pub fn main(init: std.process.Init) !void {
-    _ = init;
-
     const options = core.ProgramSettings{
         .enable_gpu_debug = true,
         .shader_format = .spirv,
@@ -16,5 +14,5 @@ pub fn main(init: std.process.Init) !void {
         .window_h = 480,
     };
 
-    try core.run(options);
+    try core.run(options, init.gpa, init.io);
 }

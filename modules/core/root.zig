@@ -1,5 +1,6 @@
 const std = @import("std");
 const sdl = @import("sdl3");
+const ipc = @import("ipc");
 const font_module = @import("font");
 const shader_module = @import("shader");
 
@@ -1792,8 +1793,24 @@ fn SDL3GPUDestroySampler(device: *sdl.SDL_GPUDevice, sampler: *sdl.SDL_GPUSample
     sdl.SDL_ReleaseGPUSampler(device, sampler);
 }
 
+fn SDL3ForwardIPCEvent(
+    allocator: std.mem.Allocator,
+    server: *ipc.Server,
+    event_type: u32,
+) !ipc.Request {
+    const request = try server.recv(allocator);
+
+    var event = std.mem.zeroes(sdl.SDL_Event);
+    event.type = event_type;
+
+    if (!sdl.SDL_PushEvent(&event))
+        return error.PushEventFailed;
+
+    return request;
+}
+
 /// Main entrypoint into the program
-pub fn run(settings: ProgramSettings) SDL3Error!void {
+pub fn run(settings: ProgramSettings, allocator: std.mem.Allocator, io: std.Io) !void {
     var interface = UserInterface.init(@floatFromInt(settings.window_w), @floatFromInt(settings.window_h));
     set_sink(&interface);
 
@@ -1970,9 +1987,60 @@ pub fn run(settings: ProgramSettings) SDL3Error!void {
     var console_glyph_count: usize = 0;
     var console_glyph_scratch: [GlyphCapacity]GlyphInstance = undefined;
 
+    // Start ipc server...
+    // TODO: kind of trash, does evented work yet?
+    var server = try ipc.Server.init(io, .{ .ip4 = std.Io.net.Ip4Address.loopback(9999) });
+    defer server.deinit();
+
+    const ipc_event = sdl.SDL_RegisterEvents(1);
+
+    var future = io.async(SDL3ForwardIPCEvent, .{ allocator, &server, ipc_event });
+
     var should_run = true;
     while (should_run) {
         while (SDL3PollEvent()) |event| {
+            if (event.type == ipc_event) {
+                const request = try future.await(io);
+
+                var forwarded = std.mem.zeroes(sdl.SDL_Event);
+
+                switch (request.command) {
+                    .MousePress => |m| {
+                        forwarded.button.type = if (m.down)
+                            sdl.SDL_EVENT_MOUSE_BUTTON_DOWN
+                        else
+                            sdl.SDL_EVENT_MOUSE_BUTTON_UP;
+
+                        forwarded.button.x = m.x;
+                        forwarded.button.y = m.y;
+                        forwarded.button.button = sdl.SDL_BUTTON_LEFT;
+                        forwarded.button.down = m.down;
+                    },
+
+                    .KeyPress => |k| {
+                        forwarded.key.type = if (k.down)
+                            sdl.SDL_EVENT_KEY_DOWN
+                        else
+                            sdl.SDL_EVENT_KEY_UP;
+
+                        forwarded.key.key = @intCast(k.key);
+                        forwarded.key.down = k.down;
+                    },
+                }
+
+                _ = sdl.SDL_PushEvent(&forwarded);
+
+                try server.respond(request, .{ .Ok = .{} });
+
+                future = io.async(SDL3ForwardIPCEvent, .{
+                    allocator,
+                    &server,
+                    ipc_event,
+                });
+
+                continue;
+            }
+
             switch (event.type) {
                 sdl.SDL_EVENT_QUIT => {
                     should_run = false;
